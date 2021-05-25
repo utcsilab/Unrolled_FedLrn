@@ -15,7 +15,7 @@ import opt
 from tqdm import tqdm
 import torch.optim as optim
 from dotmap import DotMap
-from datagen_copy import MCFullFastMRI, MCFullFastMRIBrain
+from datagen import MCFullFastMRI, MCFullFastMRIBrain
 import torch.fft as torch_fft
 
 def loss_fun(pred, gt):
