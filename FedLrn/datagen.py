@@ -258,7 +258,7 @@ class MCFullFastMRI(Dataset):
         # elif self.direction == 'x':
         #     acs = k_image[..., center_slice_idx.astype(np.int), :]
 
-        # Normalize k-space based on ACS
+        # Normalize k-space based on norm_const
         max_acs      = np.max(np.abs(acs))
         k_normalized = k_image / norm_const#max_acs
         k_inner      = k_inner / norm_const#max_acs
@@ -313,51 +313,6 @@ class MCFullFastMRI(Dataset):
 
         return sample
 
-
-
-
-# Sense in Image space, exactly like in MoDL
-# img -> mult (broad) -> FFT -> mask -> ksp
-# ksp -> mask -> IFFT -> mult (conj) -> sum (coils) -> img
-
-    # Forward
-def forward_op(img_kernel):
-        # Pointwise complex multiply with maps
-        mask_fw_ext  = mask[None, ...]
-        mult_result = img_kernel[None, ...] * img_y
-
-        # Convert back to k-space
-        result = torch_fft.ifftshift(mult_result, dim=(-2, -1))
-        result = torch_fft.fft2(result, dim=(-2, -1), norm='ortho')
-        result = torch_fft.fftshift(result, dim=(-2, -1))
-
-        # Multiply with mask
-        result = result * mask_fw_ext
-
-        return result
-
-    # Adjoint
-def adjoint_op(ksp,mask,maps):
-        # Multiply input with mask and pad
-        mask_adj_ext = mask[None, ...]
-        ksp_padded  = ksp * mask_adj_ext
-
-        # Get image representation of ksp
-        img_ksp = torch_fft.fftshift(ksp_padded, dim=(-2, -1))
-        img_ksp = torch_fft.ifft2(img_ksp, dim=(-2, -1), norm='ortho')
-        img_ksp = torch_fft.ifftshift(img_ksp, dim=(-2, -1))
-
-        # Pointwise complex multiply with complex conjugate maps
-        mult_result = img_ksp * torch.conj(maps)
-
-        # Sum on coil axis
-        x_adj = torch.sum(mult_result, dim=0)
-
-        return x_adj
-
-# Normal operator
-def normal_op(img_kernel):
-        return adjoint_op(forward_op(img_kernel))
 
 # Multicoil fastMRI dataset with various options
 class MCFullFastMRIBrain(Dataset):
@@ -515,8 +470,7 @@ class MCFullFastMRIBrain(Dataset):
 
         acs_image = RSS_recon(acs)
         norm_const = np.amax(acs_image)
-        # max_acs      = np.max(np.abs(acs))
-        # norm_const   = max_acs #comment out later
+
 
         # Add noise to ksp
         noise = np.random.randn(*k_image.shape) + 1j * np.random.randn(*k_image.shape)
@@ -579,9 +533,8 @@ class MCFullFastMRIBrain(Dataset):
         # elif self.direction == 'x':
         #     acs = k_image[..., center_slice_idx.astype(np.int), :]
 
-        # Normalize k-space based on ACS
+        # Normalize k-space based on norm_const
         max_acs      = np.max(np.abs(acs))
-        #norm_const   = max_acs #comment out later
         k_normalized = k_image / norm_const#max_acs
         k_inner      = k_inner / norm_const#max_acs
         k_outer      = k_outer / norm_const#max_acs
