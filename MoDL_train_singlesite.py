@@ -31,8 +31,8 @@ from site_loader import site_loader
 
 def get_args():
     parser = OptionParser()
-    parser.add_option('--pats'    , '--pats'    , nargs = '+',type='int', default=[50,100]   , help = '# of patients')
-    parser.add_option('--sites'    , '--sites'    , nargs = '+',type='int', default=[5]    , help='site #s you wish to train') #this script only supports one site
+    parser.add_option('--pats'    , '--pats'    , nargs = '+',type='int', default=[5,100]   , help = '# of patients')
+    parser.add_option('--sites'    , '--sites'    , nargs = '+',type='int', default=[3]    , help='site #s you wish to train') #this script only supports one site
     parser.add_option('--seed'    , '--seed'    , type='int', default=1500, help='random seed to use')
     parser.add_option('--GPU'     , '--GPU'     , type='int', default=0   , help='GPU to Use')
     parser.add_option('--num_work', '--num_work', type='int', default=10  , help='number of workers to use')
@@ -54,7 +54,7 @@ GPU_ID                = args.GPU
 global_seed           = args.seed
 num_train_pats        = args.pats
 num_workers           = args.num_work
-sites                  = args.sites
+sites                 = args.sites
 start_epoch           = args.start_ep
 end_epoch             = args.end_ep
 lr                    = args.LR
@@ -76,7 +76,7 @@ num_slices_knee   = 10
 center_slice_brain = 5
 num_slices_brain = 10
 
-for i in range(len(num_train_pats)):
+for train_pats in num_train_pats:
 
     # Fix seed
     global_seed = 1500
@@ -161,7 +161,7 @@ for i in range(len(num_train_pats)):
     #################Set save location directory################################
     global_dir = 'Results/single_site/site_%d/%s/%s/num_pool%d_num_ch%d/num_train_patients%d/seed%d' % (
          sites[0], hparams.mode, hparams.img_arch,hparams.img_blocks, hparams.img_channels,
-         num_train_pats[i], global_seed )
+         train_pats, global_seed )
 
     if not os.path.exists(global_dir):
         os.makedirs(global_dir)
@@ -188,20 +188,19 @@ for i in range(len(num_train_pats)):
         num_slices = num_slices_brain
 
     #get list of samples from function
-    train_files, train_maps, val_files, val_maps = site_loader(sites, num_train_pats[i], num_val_pats)
-
-    train_dataset = MCFullFastMRI(train_files[0], num_slices, center_slice,
+    train_files, train_maps, val_files, val_maps = site_loader(sites[0], train_pats, num_val_pats)
+    train_dataset = MCFullFastMRI(train_files, num_slices, center_slice,
                                     downsample=hparams.downsample,
                                     mps_kernel_shape=hparams.mps_kernel_shape,
-                                    maps=train_maps[0], mask_params=train_mask_params, noise_stdev = 0.0)
+                                    maps=train_maps, mask_params=train_mask_params, noise_stdev = 0.0)
     train_loader  = DataLoader(train_dataset, batch_size=hparams.batch_size,
                                      shuffle=True, num_workers=num_workers, drop_last=True)
 
     # Local Validation datasets
-    val_dataset = MCFullFastMRI(val_files[0], num_slices, center_slice,
+    val_dataset = MCFullFastMRI(val_files, num_slices, center_slice,
                                     downsample=hparams.downsample,
                                     mps_kernel_shape=hparams.mps_kernel_shape,
-                                    maps=val_maps[0], mask_params=val_mask_params, noise_stdev = 0.0)
+                                    maps=val_maps, mask_params=val_mask_params, noise_stdev = 0.0)
     val_loader  = DataLoader(val_dataset, batch_size=hparams.batch_size,
                                  shuffle=True, num_workers=num_workers, drop_last=True)
 
