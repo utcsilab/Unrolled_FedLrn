@@ -1,2 +1,2 @@
-# FedLrn
-Federated Learning for MR Image Recon
+# FedLrn Recon
+Federated Learning for MR Image Reconstruction 
