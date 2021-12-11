@@ -13,7 +13,7 @@ import h5py
 
 def site_loader(site_num, train_pat_count, val_pat_count):
     #INPUT:
-    # sites = array of integer site numbers to load
+    # sites_num = integer site number to load
     # train_pat_count = # of patients to load from each site
     # val_pat_count = # of patients to load from each site
     #OUTPUTt:
@@ -173,118 +173,117 @@ def site_loader(site_num, train_pat_count, val_pat_count):
     train_maps  = []
     val_files   = []
     val_maps    = []
-
     #####################edit training and validation sizes#########################
-    train_files_1_ = [train_files_1[idx] for idx in range(train_pat_count)]
-    train_maps_1_ = [train_maps_1[idx] for idx in range(train_pat_count)]
+    train_files_1_ = [train_files_1[idx] for idx in range(min(len(train_files_1),train_pat_count))]
+    train_maps_1_ = [train_maps_1[idx] for idx in range(min(len(train_maps_1),train_pat_count))]
     train_files.append(train_files_1_)
     train_maps.append(train_maps_1_)
-    train_files_2_ = [train_files_2[idx] for idx in range(train_pat_count)]
-    train_maps_2_ = [train_maps_2[idx] for idx in range(train_pat_count)]
+    train_files_2_ = [train_files_2[idx] for idx in range(min(len(train_files_2),train_pat_count))]
+    train_maps_2_ = [train_maps_2[idx] for idx in range(min(len(train_maps_2),train_pat_count))]
     train_files.append(train_files_2_)
     train_maps.append(train_maps_2_)
-    train_files_3_ = [train_files_3[idx] for idx in range(train_pat_count)]
-    train_maps_3_ = [train_maps_3[idx] for idx in range(train_pat_count)]
+    train_files_3_ = [train_files_3[idx] for idx in range(min(len(train_files_3),train_pat_count))]
+    train_maps_3_ = [train_maps_3[idx] for idx in range(min(len(train_maps_3),train_pat_count))]
     train_files.append(train_files_3_)
     train_maps.append(train_maps_3_)
-    train_files_4_ = [train_files_4[idx] for idx in range(train_pat_count)]
-    train_maps_4_ = [train_maps_4[idx] for idx in range(train_pat_count)]
+    train_files_4_ = [train_files_4[idx] for idx in range(min(len(train_files_4),train_pat_count))]
+    train_maps_4_ = [train_maps_4[idx] for idx in range(min(len(train_maps_4),train_pat_count))]
     train_files.append(train_files_4_)
     train_maps.append(train_maps_4_)
-    train_files_5_ = [train_files_5[idx] for idx in range(train_pat_count)]
-    train_maps_5_ = [train_maps_5[idx] for idx in range(train_pat_count)]
+    train_files_5_ = [train_files_5[idx] for idx in range(min(len(train_files_5),train_pat_count))]
+    train_maps_5_ = [train_maps_5[idx] for idx in range(min(len(train_maps_5),train_pat_count))]
     train_files.append(train_files_5_)
     train_maps.append(train_maps_5_)
-    train_files_6_ = [train_files_6[idx] for idx in range(train_pat_count)]
-    train_maps_6_ = [train_maps_6[idx] for idx in range(train_pat_count)]
+    train_files_6_ = [train_files_6[idx] for idx in range(min(len(train_files_6),train_pat_count))]
+    train_maps_6_ = [train_maps_6[idx] for idx in range(min(len(train_maps_6),train_pat_count))]
     train_files.append(train_files_6_)
     train_maps.append(train_maps_6_)
-    train_files_7_ = [train_files_7[idx] for idx in range(train_pat_count)]
-    train_maps_7_ = [train_maps_7[idx] for idx in range(train_pat_count)]
+    train_files_7_ = [train_files_7[idx] for idx in range(min(len(train_files_7),train_pat_count))]
+    train_maps_7_ = [train_maps_7[idx] for idx in range(min(len(train_maps_7),train_pat_count))]
     train_files.append(train_files_7_)
     train_maps.append(train_maps_7_)
-    train_files_8_ = [train_files_8[idx] for idx in range(train_pat_count)]
-    train_maps_8_ = [train_maps_8[idx] for idx in range(train_pat_count)]
+    train_files_8_ = [train_files_8[idx] for idx in range(min(len(train_files_8),train_pat_count))]
+    train_maps_8_ = [train_maps_8[idx] for idx in range(min(len(train_maps_8),train_pat_count))]
     train_files.append(train_files_8_)
     train_maps.append(train_maps_8_)
-    train_files_9_ = [train_files_9[idx] for idx in range(train_pat_count)]
-    train_maps_9_ = [train_maps_9[idx] for idx in range(train_pat_count)]
+    train_files_9_ = [train_files_9[idx] for idx in range(min(len(train_files_9),train_pat_count))]
+    train_maps_9_ = [train_maps_9[idx] for idx in range(min(len(train_maps_9),train_pat_count))]
     train_files.append(train_files_9_)
     train_maps.append(train_maps_9_)
-    train_files_10_ = [train_files_10[idx] for idx in range(train_pat_count)]
-    train_maps_10_ = [train_maps_10[idx] for idx in range(train_pat_count)]
+    train_files_10_ = [train_files_10[idx] for idx in range(min(len(train_files_10),train_pat_count))]
+    train_maps_10_ = [train_maps_10[idx] for idx in range(min(len(train_maps_10),train_pat_count))]
     train_files.append(train_files_10_)
     train_maps.append(train_maps_10_)
-    train_files_11_ = [train_files_11[idx] for idx in range(train_pat_count)]
-    train_maps_11_ = [train_maps_11[idx] for idx in range(train_pat_count)]
+    train_files_11_ = [train_files_11[idx] for idx in range(min(len(train_files_11),train_pat_count))]
+    train_maps_11_ = [train_maps_11[idx] for idx in range(min(len(train_maps_11),train_pat_count))]
     train_files.append(train_files_11_)
     train_maps.append(train_maps_11_)
-    train_files_12_ = [train_files_12[idx] for idx in range(train_pat_count)]
-    train_maps_12_ = [train_maps_12[idx] for idx in range(train_pat_count)]
+    train_files_12_ = [train_files_12[idx] for idx in range(min(len(train_files_12),train_pat_count))]
+    train_maps_12_ = [train_maps_12[idx] for idx in range(min(len(train_maps_12),train_pat_count))]
     train_files.append(train_files_12_)
     train_maps.append(train_maps_12_)
 
 
 
 
-    val_files_1_ = [val_files_1[idx] for idx in range(val_pat_count)]
-    val_maps_1_ = [val_maps_1[idx] for idx in range(val_pat_count)]
+    val_files_1_ = [val_files_1[idx] for idx in range(min(len(val_files_1),val_pat_count))]
+    val_maps_1_ = [val_maps_1[idx] for idx in range(min(len(val_maps_1),val_pat_count))]
     val_files.append(val_files_1_)
     val_maps.append(val_maps_1_)
-    val_files_2_ = [val_files_2[idx] for idx in range(val_pat_count)]
-    val_maps_2_ = [val_maps_2[idx] for idx in range(val_pat_count)]
+    val_files_2_ = [val_files_2[idx] for idx in range(min(len(val_files_2),val_pat_count))]
+    val_maps_2_ = [val_maps_2[idx] for idx in range(min(len(val_maps_2),val_pat_count))]
     val_files.append(val_files_2_)
     val_maps.append(val_maps_2_)
-    val_files_3_ = [val_files_3[idx] for idx in range(val_pat_count)]
-    val_maps_3_ = [val_maps_3[idx] for idx in range(val_pat_count)]
+    val_files_3_ = [val_files_3[idx] for idx in range(min(len(val_files_3),val_pat_count))]
+    val_maps_3_ = [val_maps_3[idx] for idx in range(min(len(val_maps_3),val_pat_count))]
     val_files.append(val_files_3_)
     val_maps.append(val_maps_3_)
-    val_files_4_ = [val_files_4[idx] for idx in range(val_pat_count)]
-    val_maps_4_ = [val_maps_4[idx] for idx in range(val_pat_count)]
+    val_files_4_ = [val_files_4[idx] for idx in range(min(len(val_files_4),val_pat_count))]
+    val_maps_4_ = [val_maps_4[idx] for idx in range(min(len(val_maps_4),val_pat_count))]
     val_files.append(val_files_4_)
     val_maps.append(val_maps_4_)
-    val_files_5_ = [val_files_5[idx] for idx in range(val_pat_count)]
-    val_maps_5_ = [val_maps_5[idx] for idx in range(val_pat_count)]
+    val_files_5_ = [val_files_5[idx] for idx in range(min(len(val_files_5),val_pat_count))]
+    val_maps_5_ = [val_maps_5[idx] for idx in range(min(len(val_maps_5),val_pat_count))]
     val_files.append(val_files_5_)
     val_maps.append(val_maps_5_)
-    val_files_6_ = [val_files_6[idx] for idx in range(val_pat_count)]
-    val_maps_6_ = [val_maps_6[idx] for idx in range(val_pat_count)]
+    val_files_6_ = [val_files_6[idx] for idx in range(min(len(val_files_6),val_pat_count))]
+    val_maps_6_ = [val_maps_6[idx] for idx in range(min(len(val_maps_6),val_pat_count))]
     val_files.append(val_files_6_)
     val_maps.append(val_maps_6_)
-    val_files_7_ = [val_files_7[idx] for idx in range(val_pat_count)]
-    val_maps_7_ = [val_maps_7[idx] for idx in range(val_pat_count)]
+    val_files_7_ = [val_files_7[idx] for idx in range(min(len(val_files_7),val_pat_count))]
+    val_maps_7_ = [val_maps_7[idx] for idx in range(min(len(val_maps_7),val_pat_count))]
     val_files.append(val_files_7_)
     val_maps.append(val_maps_7_)
-    val_files_8_ = [val_files_8[idx] for idx in range(val_pat_count)]
-    val_maps_8_ = [val_maps_8[idx] for idx in range(val_pat_count)]
+    val_files_8_ = [val_files_8[idx] for idx in range(min(len(val_files_8),val_pat_count))]
+    val_maps_8_ = [val_maps_8[idx] for idx in range(min(len(val_maps_8),val_pat_count))]
     val_files.append(val_files_8_)
     val_maps.append(val_maps_8_)
-    val_files_9_ = [val_files_9[idx] for idx in range(val_pat_count)]
-    val_maps_9_ = [val_maps_9[idx] for idx in range(val_pat_count)]
+    val_files_9_ = [val_files_9[idx] for idx in range(min(len(val_files_9),val_pat_count))]
+    val_maps_9_ = [val_maps_9[idx] for idx in range(min(len(val_maps_9),val_pat_count))]
     val_files.append(val_files_9_)
     val_maps.append(val_maps_9_)
-    val_files_10_ = [val_files_10[idx] for idx in range(val_pat_count)]
-    val_maps_10_ = [val_maps_10[idx] for idx in range(val_pat_count)]
+    val_files_10_ = [val_files_10[idx] for idx in range(min(len(val_files_10),val_pat_count))]
+    val_maps_10_ = [val_maps_10[idx] for idx in range(min(len(val_maps_10),val_pat_count))]
     val_files.append(val_files_10_)
     val_maps.append(val_maps_10_)
-    val_files_11_ = [val_files_11[idx] for idx in range(val_pat_count)]
-    val_maps_11_ = [val_maps_11[idx] for idx in range(val_pat_count)]
+    val_files_11_ = [val_files_11[idx] for idx in range(min(len(val_files_11),val_pat_count))]
+    val_maps_11_ = [val_maps_11[idx] for idx in range(min(len(val_maps_11),val_pat_count))]
     val_files.append(val_files_11_)
     val_maps.append(val_maps_11_)
-    val_files_12_ = [val_files_12[idx] for idx in range(val_pat_count)]
-    val_maps_12_ = [val_maps_12[idx] for idx in range(val_pat_count)]
+    val_files_12_ = [val_files_12[idx] for idx in range(min(len(val_files_12),val_pat_count))]
+    val_maps_12_ = [val_maps_12[idx] for idx in range(min(len(val_maps_12),val_pat_count))]
     val_files.append(val_files_12_)
     val_maps.append(val_maps_12_)
 
-    train_files_out = []
-    train_maps_out = []
-    val_files_out = []
-    val_maps_out = []
+    # train_files_out = []
+    # train_maps_out = []
+    # val_files_out = []
+    # val_maps_out = []
 
-    for site in site_num:
-        train_files_out.append(train_files[site])
-        train_maps_out.append(train_maps[site])
-        val_files_out.append(val_files[site])
-        val_maps_out.append(val_maps[site])
+    # for site in site_num:
+    #     train_files_out.append(train_files[site])
+    #     train_maps_out.append(train_maps[site])
+    #     val_files_out.append(val_files[site])
+    #     val_maps_out.append(val_maps[site])
     #############################################################################
-    return train_files_out, train_maps_out, val_files_out, val_maps_out
+    return train_files[site_num], train_maps[site_num], val_files[site_num], val_maps[site_num]
