@@ -408,17 +408,14 @@ class MoDLDoubleUnroll(torch.nn.Module):
                             est_img_kernel.permute(
                             0, 3, 1, 2)).permute(0, 2, 3, 1).contiguous()
             else:
-                if self.img_arch == 'ResNet':
+                if self.img_arch == 'ResNet' or self.img_arch == 'ResNetSplit':
                     est_img_kernel = self.image_net(est_img_kernel.permute(
                         0, 3, 1, 2)).permute(0, 2, 3, 1).contiguous()
                 elif self.img_arch == 'UNet':
                     est_img_kernel = self.image_net(est_img_kernel[None, ...])[0]
-                elif self.img_arch == 'ResNetSplit':
-                    est_img_kernel = self.image_net(est_img_kernel.permute(
-                        0, 3, 1, 2)).permute(0, 2, 3, 1).contiguous()
+                    
             # Convert to complex
             est_img_kernel = torch.view_as_complex(est_img_kernel)
-
             # Log
             if self.logging:
                 img_kernel_denoised.append(est_img_kernel)

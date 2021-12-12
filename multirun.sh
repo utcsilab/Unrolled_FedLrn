@@ -1,0 +1,2 @@
+python MoDL_train_singlesite.py --pats 50 200 500 2000 --sites 0 --GPU 1 --end_ep 1000 250 100 25 --ch 18 --num_pool 4 --decay_ep 500 125 50 12 --save_interval 40 10 5 1 &
+python MoDL_train_singlesite.py --pats 50 200 500 2000 --sites 1 --GPU 2 --end_ep 1000 250 100 25 --ch 18 --num_pool 4 --decay_ep 500 125 50 12 --save_interval 40 10 5 1 &

@@ -24,50 +24,7 @@ def RSS_recon(ksp):
     coil_image = sp.ifft(ksp, axes = (-2,-1))
     image = np.sum(abs(coil_image)**2, axis = 0)
     image = np.sqrt(image)
-
     return image
-# Sense in Image space, exactly like in MoDL
-# img -> mult (broad) -> FFT -> mask -> ksp
-# ksp -> mask -> IFFT -> mult (conj) -> sum (coils) -> img
-
-    # Forward
-def forward_op(img_kernel):
-        # Pointwise complex multiply with maps
-        mask_fw_ext  = mask[None, ...]
-        mult_result = img_kernel[None, ...] * img_y
-
-        # Convert back to k-space
-        result = torch_fft.ifftshift(mult_result, dim=(-2, -1))
-        result = torch_fft.fft2(result, dim=(-2, -1), norm='ortho')
-        result = torch_fft.fftshift(result, dim=(-2, -1))
-
-        # Multiply with mask
-        result = result * mask_fw_ext
-
-        return result
-
-    # Adjoint
-def adjoint_op(ksp,mask,maps):
-        # Multiply input with mask and pad
-        mask_adj_ext = mask[None, ...]
-        ksp_padded  = ksp * mask_adj_ext
-
-        # Get image representation of ksp
-        img_ksp = torch_fft.fftshift(ksp_padded, dim=(-2, -1))
-        img_ksp = torch_fft.ifft2(img_ksp, dim=(-2, -1), norm='ortho')
-        img_ksp = torch_fft.ifftshift(img_ksp, dim=(-2, -1))
-
-        # Pointwise complex multiply with complex conjugate maps
-        mult_result = img_ksp * torch.conj(maps)
-
-        # Sum on coil axis
-        x_adj = torch.sum(mult_result, dim=0)
-
-        return x_adj
-
-# Normal operator
-def normal_op(img_kernel):
-        return adjoint_op(forward_op(img_kernel))
 
 # Multicoil fastMRI dataset with various options(Previously called MCFullFastMRIBrain)
 class MCFullFastMRI(Dataset):
@@ -75,26 +32,25 @@ class MCFullFastMRI(Dataset):
                  center_slice, downsample, scramble=False,
                  mps_kernel_shape=None, maps=None,
                  direction='y', mask_params=None, noise_stdev = 0.0):
-        self.sample_list  = sample_list
-        self.num_slices   = num_slices
-        self.center_slice = center_slice
-        self.downsample   = downsample
+        self.sample_list      = sample_list
+        self.num_slices       = num_slices
+        self.center_slice     = center_slice
+        self.downsample       = downsample
         self.mps_kernel_shape = mps_kernel_shape
-        self.scramble     = scramble # Scramble samples or not?
-        self.maps         = maps # Pre-estimated sensitivity maps
-        self.direction    = direction # Which direction are lines in
-        self.mask_mode    = mask_params.mask_mode
-        self.stdev        = noise_stdev
+        self.scramble         = scramble # Scramble samples or not?
+        self.maps             = maps # Pre-estimated sensitivity maps
+        self.direction        = direction # Which direction are lines in
+        self.mask_mode        = mask_params.mask_mode
+        self.stdev            = noise_stdev
+        
         if self.scramble:
             # One time permutation
             self.permute = np.random.permutation(self.__len__())
             self.inv_permute = np.zeros(self.permute.shape)
             self.inv_permute[self.permute] = np.arange(len(self.permute))
 
-        elif self.mask_mode == 'Accel_only':
-            self.num_theta_masks = 1
-        else:
-            assert False, 'Invalid mask mode in datagen.py!'
+        # Deprecated
+        self.num_theta_masks = 1
 
     def __len__(self):
         return len(self.sample_list) * self.num_slices
@@ -112,7 +68,6 @@ class MCFullFastMRI(Dataset):
         sample_idx = idx // self.num_slices
         slice_idx  = self.center_slice + \
             np.mod(idx, self.num_slices) - self.num_slices // 2
-        map_idx = np.mod(idx, self.num_slices) # Maps always count from zero
 
         # Load MRI image
         with h5py.File(self.sample_list[sample_idx], 'r') as contents:
@@ -152,7 +107,7 @@ class MCFullFastMRI(Dataset):
 
         # Remove dead lines completely
         k_image = np.delete(k_image, dead_lines, axis=-1)
- #      Remove them from the frequency representation of the maps as well
+        # Remove them from the frequency representation of the maps as well
         if not self.maps is None:
             k_maps = sp.fft(s_maps, axes=(-2, -1))
             k_maps = np.delete(k_maps, dead_lines, axis=-1)
@@ -202,26 +157,20 @@ class MCFullFastMRI(Dataset):
             acs = k_image[..., center_slice_idx.astype(np.int)]
         elif self.direction == 'x':
             acs = k_image[..., center_slice_idx.astype(np.int), :]
-
-
-        acs_image = sp.rss(sp.ifft(sp.resize(sp.resize(k_image, [k_image.shape[0], int(num_central_lines) , int(num_central_lines)]), gt_ksp.shape), axes=(-1,-2)), axes=(0,))
+        # Get normalization constant from ACS
+        acs_image = sp.rss(sp.ifft(sp.resize(sp.resize(k_image, 
+               [k_image.shape[0], int(num_central_lines) , int(num_central_lines)]), gt_ksp.shape), 
+                                   axes=(-1,-2)), axes=(0,))
         norm_const = np.percentile(acs_image, 99)
 
-
-        # Add noise to ksp
-        noise = np.random.randn(*k_image.shape) + 1j * np.random.randn(*k_image.shape)
-        k_image = k_image + 1 / np.sqrt(2) * self.stdev * noise * norm_const
+        # Optional: Add noise to ksp
+        if self.stdev > 1e-20:
+            noise = np.random.randn(*k_image.shape) + 1j * np.random.randn(*k_image.shape)
+            k_image = k_image + 1 / np.sqrt(2) * self.stdev * noise * norm_const
         ksp_nonzero_noise = np.copy(k_image)
-
 
         # Get measurements
         k_image[..., np.logical_not(k_sampling_mask)] = 0.
-
-        # Expand original mask to [nrows, ncol] for input to SSDU function
-        if self.direction == 'y':
-             k_mask_kx_ky = np.array([k_sampling_mask]*k_image.shape[-2])
-        elif self.direction == 'x':
-             k_mask_kx_ky = np.array([k_sampling_mask]*k_image.shape[-1]).transpose()
 
         if self.mask_mode == 'Accel_only':
             # Plain copy
@@ -246,13 +195,12 @@ class MCFullFastMRI(Dataset):
         k_inner     = np.stack(k_inner)
         masks_inner = np.stack(masks_inner)
 
-        max_acs      = np.max(np.abs(acs))
         # Normalize k-space based on ACS
         k_normalized = k_image / norm_const
         k_inner      = k_inner / norm_const
         k_outer      = k_outer / norm_const
         gt_ksp       = gt_ksp / norm_const
-        gt_nonzero_ksp = gt_nonzero_ksp / norm_const
+        gt_nonzero_ksp    = gt_nonzero_ksp / norm_const
         ksp_nonzero_noise = ksp_nonzero_noise / norm_const
 
         ksp_padded_noise = sp.resize(ksp_nonzero_noise, gt_ksp.shape)
@@ -263,7 +211,6 @@ class MCFullFastMRI(Dataset):
         gt_ref_rss   = sp.resize(sp.rss(sp.ifft(gt_nonzero_ksp_pad, axes=(-1,-2)), axes=(0,)), ref_rss.shape)
         ref_rss      = ref_rss / norm_const
         data_range   = np.max(gt_ref_rss)
-
 
         # Initial sensitivity maps
         x_coils    = sp.ifft(k_image, axes=(-2, -1))
@@ -281,7 +228,6 @@ class MCFullFastMRI(Dataset):
                   'ksp_outer': k_outer.astype(np.complex64),
                   'ksp_ACS': acs.astype(np.complex64),
                   ###
-
                   'gt_ksp': gt_ksp.astype(np.complex64),
                   'nonzero_ksp_noise': ksp_nonzero_noise.astype(np.complex64),
                   'padded_ksp_noise': ksp_padded_noise.astype(np.complex64),
@@ -300,7 +246,6 @@ class MCFullFastMRI(Dataset):
                   'mask_inner': masks_inner.astype(np.float32),
                   'mask_outer': mask_outer.astype(np.float32),
                   ###
-
                   'acs_lines': len(center_slice_idx),
                   'dead_lines': dead_lines,
                   'gt_ref_rss': gt_ref_rss.astype(np.float32),
