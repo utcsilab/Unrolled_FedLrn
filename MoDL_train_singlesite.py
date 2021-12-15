@@ -69,7 +69,6 @@ plt.ioff(); plt.close('all')
 os.environ["CUDA_DEVICE_ORDER"]    = "PCI_BUS_ID";
 os.environ["CUDA_VISIBLE_DEVICES"] = str(GPU_ID)
 
-
 n_stdev =  [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 # 'num_slices' around 'central_slice' from each scan. Again this may need to be unique for each dataset
 center_slice_knee  = 17
@@ -77,14 +76,20 @@ num_slices_knee    = 10
 center_slice_brain = 5
 num_slices_brain   = 10
 
+# Check to see if all args are passed in full
+assert len(num_train_pats) == len(save_interval), 'Incorrect list args!'
+assert len(num_train_pats) == len(end_epoch), 'Incorrect list args!'
+assert len(num_train_pats) == len(decay_epochs), 'Incorrect list args!'
+assert len(num_train_pats) == len(sites), 'Incorrect list args!'
+
+# Hyper-loop
 for train_pats, val_interval, num_epochs, decay_ep, local_site in \
     zip(num_train_pats, save_interval, end_epoch, decay_epochs, sites):
-    # Fix seed
-    global_seed = 1500
+
+    # Set seed
     torch.manual_seed(global_seed)
     np.random.seed(global_seed)
-    # Enable cuDNN kernel selection
-    torch.backends.cudnn.benchmark = True
+
     ##################### Mask configs(dont touch unless doing unsupervised)#####
     train_mask_params, val_mask_params = DotMap(), DotMap()
     # 'Accel_only': accelerates in PE direction.
@@ -194,62 +199,55 @@ for train_pats, val_interval, num_epochs, decay_ep, local_site in \
         center_slice = center_slice_brain
         num_slices   = num_slices_brain
 
-    #get list of samples from function
+    # Get list of samples from function
     train_files, train_maps, val_files, val_maps = site_loader(local_site, train_pats, num_val_pats)
+    # Train dataset
     train_dataset = MCFullFastMRI(train_files, num_slices, center_slice,
                                 downsample=hparams.downsample,
                                 mps_kernel_shape=hparams.mps_kernel_shape,
-                                maps=train_maps, mask_params=train_mask_params, noise_stdev = 0.0)
+                                maps=train_maps, mask_params=train_mask_params, 
+                                noise_stdev = 0.0)
     train_loader  = DataLoader(train_dataset, batch_size=hparams.batch_size,
                                shuffle=True, num_workers=num_workers, drop_last=True)
-
-    # Local Validation datasets
+    # Validatiopn dataset
     val_dataset = MCFullFastMRI(val_files, num_slices, center_slice,
                                 downsample=hparams.downsample,
                                 mps_kernel_shape=hparams.mps_kernel_shape,
-                                maps=val_maps, mask_params=val_mask_params, noise_stdev = 0.0,
-                                scramble=True)
+                                maps=val_maps, mask_params=val_mask_params,
+                                noise_stdev = 0.0, scramble=True)
     val_loader  = DataLoader(val_dataset, batch_size=hparams.batch_size,
                              shuffle=False, num_workers=num_workers, drop_last=True)
 
-    ############################################################################
-    # Training relevent information
-    # Criterions
+    ## Training objects and utilities
+    # Criterions for losses
     ssim           = SSIMLoss().cuda()
     multicoil_loss = MCLoss().cuda()
     pixel_loss     = torch.nn.MSELoss(reduction='sum')
     nmse_loss      = NMSELoss()
 
-    # Get optimizer and scheduler(One for each site)
+    # Get optimizer and scheduler (One for each site)
     optimizer = Adam(model.parameters(), lr=hparams.lr)
     scheduler = StepLR(optimizer, hparams.decay_epochs,
                        gamma=hparams.decay_gamma)
 
-    #create logs for each site in list format
+    # Create logs for each site in list format
     best_loss = np.inf
     training_log = []
-    loss_log = []
-    ssim_log = []
-    coil_log = []
-    nmse_log = []
+    loss_log, ssim_log = [], []
+    coil_log, nmse_log = [], []
     running_training = 0.
-    running_loss = 0.
-    running_nmse = 0.
-    running_ssim = -1.
-    running_coil = 0.
+    running_loss, running_nmse = 0., 0.
+    running_ssim, running_coil = -1., 0.
     Val_SSIM = []
 
+    # Create a local directory
     local_dir = global_dir + '/N%d_n%d_lamInit%.3f' % (
             hparams.meta_unrolls, hparams.block2_max_iter,
             hparams.l2lam_init)
     if not os.path.isdir(local_dir):
         os.makedirs(local_dir)
-    ############################################################################
-    #######end of setting training configurations###############################
-    ############################################################################
 
-
-    #############Training Occurs Below#######
+    ## Training
     model.train()
     # For each epoch
     for epoch_idx in range(num_epochs):
@@ -260,6 +258,7 @@ for train_pats, val_interval, num_epochs, decay_ep, local_site in \
                     sample[key] = sample[key].cuda()
                 except:
                     pass
+
             # Get outputs
             est_img_kernel, est_map_kernel, est_ksp = \
                 model(sample, hparams.meta_unrolls,
@@ -286,19 +285,19 @@ for train_pats, val_interval, num_epochs, decay_ep, local_site in \
             ssim_loss = ssim(est_crop_rss[:,None], gt_rss[:,None], data_range)
             loss      = ssim_loss
 
-            # Other Loss for tracking
+            # Other losses for tracking
             with torch.no_grad():
                 coil_loss = multicoil_loss(est_ksp, sample['gt_nonzero_ksp'])
                 pix_loss  = pixel_loss(est_crop_rss, gt_rss)
                 nmse      = nmse_loss(gt_rss,est_crop_rss)
 
-            # Keep a running loss
+            # Keep running losses
             running_training = 0.99 * running_training + 0.01 * loss.item() if running_training > 0. else loss.item()
             running_ssim = 0.99 * running_ssim + 0.01 * (1-ssim_loss.item()) if running_ssim > -1. else (1-ssim_loss.item())
             running_loss = 0.99 * running_loss + 0.01 * pix_loss.item() if running_loss > 0. else pix_loss.item()
             running_coil = 0.99 * running_coil + 0.01 * coil_loss.item() if running_coil > 0. else coil_loss.item()
             running_nmse = 0.99 * running_nmse + 0.01 * nmse.item() if running_nmse > 0. else nmse.item()
-
+            # Log
             training_log.append(running_training)
             loss_log.append(running_loss)
             ssim_log.append(running_ssim)
@@ -332,7 +331,7 @@ for train_pats, val_interval, num_epochs, decay_ep, local_site in \
 
                 # Save
                 plt.tight_layout()
-                plt.savefig(local_dir + '/train_site' + str(local_site) + '_samples_epoch%d.png' % epoch_idx, dpi=300)
+                plt.savefig(local_dir + '/train_site' + str(local_site) + '_sample_epoch%d.png' % epoch_idx, dpi=300)
                 plt.close()
         
         # Save periodically
@@ -342,6 +341,7 @@ for train_pats, val_interval, num_epochs, decay_ep, local_site in \
                 'sample_idx': sample_idx,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
+                'training_log': training_log,
                 'ssim_log': ssim_log,
                 'loss_log': loss_log,
                 'coil_log': coil_log,
@@ -350,8 +350,9 @@ for train_pats, val_interval, num_epochs, decay_ep, local_site in \
                 'hparams': hparams,
                 'train_mask_params': train_mask_params}, 
                 local_dir + '/ckpt_epoch' + str(epoch_idx) + '_site' +
-                str(local_site) + 'last_weights.pt')
+                str(local_site) + '.pt')
 
+        # Increment scheduler
         scheduler.step()
 
         # Compute validation SSIM
@@ -426,5 +427,6 @@ for train_pats, val_interval, num_epochs, decay_ep, local_site in \
             plt.tight_layout()
             plt.savefig(local_dir + '/train&val_curves_site' + str(local_site) + '_samples_epoch%d.png' % epoch_idx, dpi=300)
             plt.close()
+
         # Back to training
         model.train()
