@@ -16,8 +16,6 @@ from core_ops import TorchMoDLSense, TorchMoDLImage
 from utils import fft, ifft
 
 from opt import ZConjGrad
-from resnet import ResNet
-from resnet_c import ResNetSplit
 from unet import NormUnet
 
 # Unrolled J-Sense in MoDL style
@@ -90,45 +88,23 @@ class MoDLDoubleUnroll(torch.nn.Module):
         if hparams.use_img_net:
             # Initialize ResNet module
             if self.img_sep: # Do we use separate networks at each unroll?
-                if self.all_sep == True:
-                    self.image_net = torch.nn.ModuleList(
-                        [ ResNetSplit(num_blocks1=self.num_blocks1, num_blocks2=self.num_blocks2,
-                                                   in_channels=2, latent_channels=self.latent_channels,
-                                                   kernel_size=self.kernel_size,
-                                                   bias=False, batch_norm=False,
-                                                   dropout=0, topk=None, l1lam=None)  for i in range(hparams.meta_unrolls_end)])
-                elif self.all_sep == False:
-                    self.image_net = torch.nn.ModuleList(
-                            [ ResNetSplit(num_blocks1=self.num_blocks1, num_blocks2=self.num_blocks2,
-                                                       in_channels=2, latent_channels=self.latent_channels,
-                                                       kernel_size=self.kernel_size,
-                                                       bias=False, batch_norm=False,
-                                                       dropout=0, topk=None, l1lam=None)  for i in range(2)]) #create two networks: gloabl,local
+                assert False, 'Deprecated!'
             else:
                 if self.img_arch == 'ResNet':
-                    self.image_net = ResNet(in_channels=2,
-                                            latent_channels=self.img_channels,
-                                            num_blocks=self.img_blocks,
-                                            kernel_size=3, batch_norm=False)
+                    assert False, 'Deprecated!'
                 elif self.img_arch == 'UNet':
                     # !!! Normalizes
                     self.image_net = NormUnet(chans=self.img_channels,
                                               num_pools=self.img_blocks)
                 elif self.img_arch == 'ResNetSplit':
-                    self.image_net = ResNetSplit(num_blocks1=self.num_blocks1, num_blocks2=self.num_blocks2,
-                                               in_channels=2, latent_channels=self.latent_channels, kernel_size=self.kernel_size,
-                                               bias=False, batch_norm=False, dropout=0, topk=None, l1lam=None)
+                    assert False, 'Deprecated!'
         else:
             # Bypass
             self.image_net = torch.nn.Identity()
 
         # Initialize map module
         if hparams.use_map_net:
-            # Intialize ResNet module
-            self.maps_net  = ResNet(in_channels=2,
-                                    latent_channels=self.map_channels,
-                                    num_blocks=self.map_blocks,
-                                    kernel_size=3, batch_norm=False)
+            assert False, 'Deprecated!'
         else:
             # Bypass
             self.maps_net  = torch.nn.Identity()
@@ -394,23 +370,10 @@ class MoDLDoubleUnroll(torch.nn.Module):
 
             # Apply image denoising network in image space
             if self.img_sep:
-                if self.all_sep:
-                    est_img_kernel = self.image_net[meta_idx](
-                        est_img_kernel.permute(
-                        0, 3, 1, 2)).permute(0, 2, 3, 1).contiguous()
-                else:
-                    if meta_idx < self.share_global:
-                        est_img_kernel = self.image_net[0](
-                            est_img_kernel.permute(
-                            0, 3, 1, 2)).permute(0, 2, 3, 1).contiguous()
-                    else:
-                        est_img_kernel = self.image_net[1](
-                            est_img_kernel.permute(
-                            0, 3, 1, 2)).permute(0, 2, 3, 1).contiguous()
+                assert False, 'Deprecated!'
             else:
                 if self.img_arch == 'ResNet' or self.img_arch == 'ResNetSplit':
-                    est_img_kernel = self.image_net(est_img_kernel.permute(
-                        0, 3, 1, 2)).permute(0, 2, 3, 1).contiguous()
+                    assert False, 'Deprecated!'
                 elif self.img_arch == 'UNet':
                     est_img_kernel = self.image_net(est_img_kernel[None, ...])[0]
                     

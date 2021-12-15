@@ -22,6 +22,12 @@ from matplotlib import pyplot as plt
 from argparse import ArgumentParser
 from site_loader import site_loader
 
+# Maybe
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32       = True
+# Always !!!
+torch.backends.cudnn.benchmark = True
+
 def get_args():
     parser = ArgumentParser()
     parser.add_argument('--pats'    , nargs = '+', type=int, default=[5,100], help = '# of patients')
@@ -56,7 +62,7 @@ save_interval         = args.save_interval
 unet_ch               = args.ch
 unet_num_pool         = args.num_pool
 
-num_val_pats = 28
+num_val_pats = 20
 plt.rcParams.update({'font.size': 12})
 plt.ioff(); plt.close('all')
 
@@ -66,13 +72,13 @@ os.environ["CUDA_VISIBLE_DEVICES"] = str(GPU_ID)
 
 n_stdev =  [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 # 'num_slices' around 'central_slice' from each scan. Again this may need to be unique for each dataset
-center_slice_knee = 17
-num_slices_knee   = 10
+center_slice_knee  = 17
+num_slices_knee    = 10
 center_slice_brain = 5
-num_slices_brain = 10
+num_slices_brain   = 10
 
-for train_pats, val_interval, num_epochs, decay_ep in \
-    zip(num_train_pats, save_interval, end_epoch, decay_epochs):
+for train_pats, val_interval, num_epochs, decay_ep, local_site in \
+    zip(num_train_pats, save_interval, end_epoch, decay_epochs, sites):
     # Fix seed
     global_seed = 1500
     torch.manual_seed(global_seed)
@@ -105,16 +111,10 @@ for train_pats, val_interval, num_epochs, decay_ep in \
 
     # Not used just a hold over from previous code
     if hparams.mode == 'DeepJSense':
-        hparams.use_map_net     = True
-        hparams.map_init        = 'estimated' # Can be anything
-        hparams.block1_max_iter = 6 # Maps
-        train_maps, val_maps    = None, None
-        # Map network parameters
-        hparams.map_channels = 64
-        hparams.map_blocks   = 4
+        assert False, 'Deprecated!'
         
     ##################### Image- and Map-Net parameters#########################
-    hparams.img_arch     = 'UNet' # 'UNet' or 'ResNet' or 'ResNetSplit' for same split in all unrolls or 'ResUnrollSplit' to split across unrolls
+    hparams.img_arch     = 'UNet' # 'UNet' only
     hparams.img_channels = unet_ch
     hparams.img_blocks   = unet_num_pool
     if hparams.img_arch != 'UNet':
@@ -140,7 +140,7 @@ for train_pats, val_interval, num_epochs, decay_ep in \
         
     ###########################################################################
     # MoDL parametrs
-    #NOTE: some of the params are used only for DeepJSense
+    # NOTE: some of the params are used only for DeepJSense
     hparams.use_img_net        = True
     hparams.img_init           = 'estimated'
     hparams.mps_kernel_shape   = [15, 15, 9] # Always 15 coils
@@ -165,7 +165,8 @@ for train_pats, val_interval, num_epochs, decay_ep in \
     
     #################Set save location directory################################
     global_dir = 'Results/single_site/site_%d/%s/%s/num_pool%d_num_ch%d/num_train_patients%d/seed%d' % (
-         sites[0], hparams.mode, hparams.img_arch,hparams.img_blocks, hparams.img_channels,
+         local_site, hparams.mode, hparams.img_arch,
+         hparams.img_blocks, hparams.img_channels,
          train_pats, global_seed )
     if not os.path.exists(global_dir):
         os.makedirs(global_dir)
@@ -186,21 +187,21 @@ for train_pats, val_interval, num_epochs, decay_ep in \
     print('Total parameters %d' % total_params)
     ############################################################################
     ########Get relevant data and datloaders Local training datasets############
-    if sites[0] <=3: #must be a knee site
+    if local_site <= 3: #must be a knee site
         center_slice = center_slice_knee
-        num_slices = num_slices_knee
-    elif sites[0] >3: #must be a brain site
+        num_slices   = num_slices_knee
+    elif local_site > 3: #must be a brain site
         center_slice = center_slice_brain
-        num_slices = num_slices_brain
+        num_slices   = num_slices_brain
 
     #get list of samples from function
-    train_files, train_maps, val_files, val_maps = site_loader(sites[0], train_pats, num_val_pats)
+    train_files, train_maps, val_files, val_maps = site_loader(local_site, train_pats, num_val_pats)
     train_dataset = MCFullFastMRI(train_files, num_slices, center_slice,
                                 downsample=hparams.downsample,
                                 mps_kernel_shape=hparams.mps_kernel_shape,
                                 maps=train_maps, mask_params=train_mask_params, noise_stdev = 0.0)
     train_loader  = DataLoader(train_dataset, batch_size=hparams.batch_size,
-                                     shuffle=True, num_workers=num_workers, drop_last=True)
+                               shuffle=True, num_workers=num_workers, drop_last=True)
 
     # Local Validation datasets
     val_dataset = MCFullFastMRI(val_files, num_slices, center_slice,
@@ -239,7 +240,7 @@ for train_pats, val_interval, num_epochs, decay_ep in \
     Val_SSIM = []
 
     local_dir = global_dir + '/N%d_n%d_lamInit%.3f' % (
-            hparams.meta_unrolls, hparams.block1_max_iter,
+            hparams.meta_unrolls, hparams.block2_max_iter,
             hparams.l2lam_init)
     if not os.path.isdir(local_dir):
         os.makedirs(local_dir)
@@ -313,7 +314,7 @@ for train_pats, val_interval, num_epochs, decay_ep in \
 
             # Verbose
             print('Epoch %d, Site %d, Step %d, Batch loss %.4f. Avg. SSIM %.4f, Avg. RSS %.4f, Avg. Coils %.4f, Avg. NMSE %.4f' % (
-                epoch_idx, sites[0], sample_idx, loss.item(), running_ssim, 
+                epoch_idx, local_site, sample_idx, loss.item(), running_ssim, 
                 running_loss, running_coil, running_nmse))
 
             # Plot the first training sample
@@ -331,7 +332,7 @@ for train_pats, val_interval, num_epochs, decay_ep in \
 
                 # Save
                 plt.tight_layout()
-                plt.savefig(local_dir + '/train_site' + str(sites[0]) + '_samples_epoch%d.png' % epoch_idx, dpi=300)
+                plt.savefig(local_dir + '/train_site' + str(local_site) + '_samples_epoch%d.png' % epoch_idx, dpi=300)
                 plt.close()
         
         # Save periodically
@@ -349,7 +350,7 @@ for train_pats, val_interval, num_epochs, decay_ep in \
                 'hparams': hparams,
                 'train_mask_params': train_mask_params}, 
                 local_dir + '/ckpt_epoch' + str(epoch_idx) + '_site' +
-                str(sites[0]) + 'last_weights.pt')
+                str(local_site) + 'last_weights.pt')
 
         scheduler.step()
 
@@ -405,12 +406,12 @@ for train_pats, val_interval, num_epochs, decay_ep in \
                 
                 # Save
                 plt.tight_layout()
-                plt.savefig(local_dir + '/val_site' + str(sites[0]) + '_samples_epoch%d.png' % epoch_idx, dpi=300)
+                plt.savefig(local_dir + '/val_site' + str(local_site) + '_samples_epoch%d.png' % epoch_idx, dpi=300)
                 plt.close()
                 
-                if sites[0] <= 3:
+                if local_site <= 3:
                     Val_SSIM.append(running_SSIM_val/(num_slices_knee*num_val_pats))
-                elif sites[0] > 3:
+                elif local_site > 3:
                     Val_SSIM.append(running_SSIM_val/(num_slices_brain*num_val_pats))
                 
             # Plot validation metrics
@@ -423,7 +424,7 @@ for train_pats, val_interval, num_epochs, decay_ep in \
             plt.plot(np.asarray(Val_SSIM))
             # Save
             plt.tight_layout()
-            plt.savefig(local_dir + '/train&val_curves_site' + str(sites[0]) + '_samples_epoch%d.png' % epoch_idx, dpi=300)
+            plt.savefig(local_dir + '/train&val_curves_site' + str(local_site) + '_samples_epoch%d.png' % epoch_idx, dpi=300)
             plt.close()
         # Back to training
         model.train()
