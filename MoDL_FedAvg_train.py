@@ -13,7 +13,7 @@ from models_c import MoDLDoubleUnroll
 from losses import SSIMLoss, MCLoss, NMSELoss
 from utils import ifft
 
-from torch.optim import Adam
+from torch.optim import Adam, SGD
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
 from torch.nn import functional as F
@@ -41,6 +41,7 @@ def get_args():
     parser.add_argument('--ch'      , type=int                   , help='number of channels in Unet')
     parser.add_argument('--num_pool', type=int                   , help='number of pool layer in UNet')
     parser.add_argument('--LR'      , type=float, default=3e-4   , help='learning rate for training')
+    parser.add_argument('--client_opt', type=str, default='Adam' , help='core optimizer for each client')
     parser.add_argument('--client_pats' , nargs='+', type=int, help='Vector of client samples (patients, 10 slices each)')
     parser.add_argument('--client_sites', nargs='+', type=int, help='Vector of client sites (local data distribution)')
     parser.add_argument('--share_int'   , '--share_int', type= int, default=12, help='how often do we share weights(measured in steps)')
@@ -65,9 +66,14 @@ num_rounds            = args.train_dilation * 24
 save_interval         = args.train_dilation * 1
 decay_epochs          = args.train_dilation * 16
 
+# Federation stuff
 share_int             = args.share_int
 client_pats           = args.client_pats
 client_sites          = args.client_sites
+
+# More federation stuff
+client_opt            = args.client_opt
+
 num_val_pats          = 20
 # Immediately determine number of clients
 assert len(client_pats) == len(client_sites), 'Client args mismatch!'
@@ -172,9 +178,9 @@ hparams.coil_lam = 0.
 hparams.ssim_lam = 1.
 # print(multi_site, num_clients, share_int, hparams.img_arch, hparams.img_blocks, hparams.img_channels, np.min(client_pats), global_seed)
 #################Set save location directory################################
-global_dir = 'Results/federated/multiSite%d_clients%d_siteMin%d_siteMax%d/\
+global_dir = 'Results/federated/multiSite%d_client%s_clients%d_siteMin%d_siteMax%d/\
 sync%d/%s_pool%d_ch%d/num_train_patients%d/seed%d' % (
-      multi_site, num_clients, np.min(client_sites),
+      multi_site, client_opt, num_clients, np.min(client_sites),
       np.max(client_sites), share_int, hparams.img_arch,
       hparams.img_blocks, hparams.img_channels,
       np.min(client_pats), global_seed)
@@ -266,7 +272,13 @@ nmse_loss      = NMSELoss()
 optimizers = []
 schedulers = []
 for i in range(num_clients):
-    optimizer = Adam(model.parameters(), lr=hparams.lr)
+    if client_opt == 'Adam':
+        optimizer = Adam(model.parameters(), lr=hparams.lr)
+    elif client_opt == 'SGD':
+        optimizer = SGD(model.parameters(), lr=hparams.lr)
+    else:
+        assert False, 'Incorrect client optimizer!'
+        
     scheduler = StepLR(optimizer, hparams.decay_epochs,
                        gamma=hparams.decay_gamma)
     optimizers.append(optimizer)
