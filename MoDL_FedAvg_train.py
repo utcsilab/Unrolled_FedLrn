@@ -178,6 +178,9 @@ if not os.path.exists(global_dir):
 ######################initialize model using hparams########################
 model = MoDLDoubleUnroll(hparams)
 model = model.cuda()
+# Initialize scratch model
+scratch_model = MoDLDoubleUnroll(hparams)
+
 # Switch to train
 model.train()
 torch.save({
@@ -360,11 +363,11 @@ for round_idx in range(num_rounds):
 
             # SSIM loss with crop
             ssim_loss = ssim(est_crop_rss[:,None], gt_rss[:,None], data_range)
-            coil_loss = multicoil_loss(est_ksp, sample['gt_nonzero_ksp'])
-            loss = hparams.ssim_lam * ssim_loss + hparams.coil_lam * coil_loss
+            loss = hparams.ssim_lam * ssim_loss
 
-            # Other Loss for tracking
+            # Other losses for tracking
             with torch.no_grad():
+                coil_loss = multicoil_loss(est_ksp, sample['gt_nonzero_ksp'])
                 pix_loss  = pixel_loss(est_crop_rss, gt_rss)
                 nmse      = nmse_loss(gt_rss,est_crop_rss)
 
@@ -421,7 +424,7 @@ for round_idx in range(num_rounds):
                 'loss': loss,
                 'hparams': hparams,
                 'train_mask_params': train_mask_params}, local_dir + '/round' +
-                str(round_idx) + '_client'+ str(client_idx) + 'before_download.pt')
+                str(round_idx) + '_client'+ str(client_idx) + '_before_download.pt')
 
     # Step all schedulers
     for i in range(num_clients):
@@ -430,31 +433,29 @@ for round_idx in range(num_rounds):
     ##################FEDERATED WEIGHT SHARING##############################
     with torch.no_grad():
         print("Federated weight averaging occuring at the end of the round")
-        state_dict_accumulator = MoDLDoubleUnroll(hparams)
         # Start with the first client
         saved_model = torch.load(upload_files[0])
-        state_dict_accumulator.load_state_dict(saved_model['model_state_dict'])
-        state_dict_accumulator = state_dict_accumulator.state_dict()
+        scratch_model.load_state_dict(saved_model['model_state_dict'])
+        state_dict_accumulator = copy.deepcopy(scratch_model.state_dict())
 
         # Accumulate weights from all other clients
-        for key in state_dict_accumulator:
-            for fed_idx in range(1, num_clients):
-                state_dict_transitive = MoDLDoubleUnroll(hparams)
-                temp_model = torch.load(upload_files[fed_idx])
-                state_dict_transitive.load_state_dict(temp_model['model_state_dict'])
-                state_dict_transitive = state_dict_transitive.state_dict()
-                state_dict_accumulator[key] = state_dict_accumulator[key] + state_dict_transitive[key]
-
-            # Average, not sum
+        for fed_idx in range(1, num_clients):
+            # Only load the model once
+            temp_model = torch.load(upload_files[fed_idx])
+            scratch_model.load_state_dict(temp_model['model_state_dict'])
+            for key in state_dict_accumulator.keys():
+                state_dict_accumulator[key] = \
+                    state_dict_accumulator[key] + scratch_model.state_dict()[key]
+        
+        for key in state_dict_accumulator.keys():
+            # Average at the end, not sum
             state_dict_accumulator[key] = state_dict_accumulator[key]/num_clients
 
         # Save ('download') the federated weights in a scratch file
         if os.path.exists(download_file):
             os.remove(download_file)
-        final_model = MoDLDoubleUnroll(hparams)
-        final_model.load_state_dict(state_dict_accumulator)
         # Clients will download this
-        torch.save({'model_state_dict': final_model.state_dict()}, download_file)
+        torch.save({'model_state_dict': state_dict_accumulator}, download_file)
 
     # Save and evaluate periodically after downloading
     if np.mod(round_idx + 1, save_interval) == 0:
