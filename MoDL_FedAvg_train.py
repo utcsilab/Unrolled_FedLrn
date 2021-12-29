@@ -45,7 +45,7 @@ def get_args():
     parser.add_argument('--comp_val'     , type=int              , help='do you want to compute validation results every epoch')
     parser.add_argument('--client_pats' , nargs='+', type=int, help='Vector of client samples (patients, 10 slices each)')
     parser.add_argument('--client_sites', nargs='+', type=int, help='Vector of client sites (local data distribution)')
-    parser.add_argument('--share_int'   , '--share_int', type='int', default=12, help='how often do we share weights(measured in steps)')
+    parser.add_argument('--share_int'   , '--share_int', type= int, default=12, help='how often do we share weights(measured in steps)')
 
     args = parser.parse_args()
     return args
@@ -118,7 +118,7 @@ if hparams.mode == 'MoDL':
 # Not used just a hold over from previous code
 if hparams.mode == 'DeepJSense':
     assert False, 'Deprecated!'
-    
+
 ##################### Image- and Map-Net parameters#########################
 hparams.img_arch     = 'UNet' # 'UNet' only
 hparams.img_channels = unet_ch
@@ -141,7 +141,7 @@ if hparams.share_mode != 'Seperate':
     hparams.share_global    = 2
 else:
     hparams.img_sep = False
-    
+
 ###########################################################################
 # MoDL parametrs
 # NOTE: some of the params are used only for DeepJSense
@@ -166,7 +166,7 @@ hparams.batch_size   = 1 # !!! Unsupported !!!
 # Loss lambdas
 hparams.coil_lam = 0.
 hparams.ssim_lam = 1.
-
+# print(multi_site, num_clients, share_int, hparams.img_arch, hparams.img_blocks, hparams.img_channels, np.min(client_pats), global_seed)
 #################Set save location directory################################
 global_dir = 'Results/federated/multiSite%d_clients%d/sync%d/%s_pool%d_ch%d/num_train_patients%d/seed%d' % (
       multi_site, num_clients, share_int, hparams.img_arch,
@@ -174,7 +174,7 @@ global_dir = 'Results/federated/multiSite%d_clients%d/sync%d/%s_pool%d_ch%d/num_
       np.min(client_pats), global_seed)
 if not os.path.exists(global_dir):
     os.makedirs(global_dir)
-    
+
 ######################initialize model using hparams########################
 model = MoDLDoubleUnroll(hparams)
 model = model.cuda()
@@ -190,22 +190,35 @@ print('Total parameters %d' % total_params)
 
 ######## Get client datasets and dataloaders ############
 train_loaders, val_loaders = [], []
-cursors, iterators         = [], []
+cursors, iterators          = [], [] #make a cursor for each unique site(used (not client)
+unique_sites = list(set(client_sites))
+num_unique = len(unique_sites)
+print('unique sites:', unique_sites)
+print('# of unique sites:', num_unique)
+for i in range(num_unique):
+    cursors.append(0)
 
 # Get unique data for each client, from their own site
+print(num_clients)
 for i in range(num_clients):
+
     # Get all the filenames from the site
     all_train_files, all_train_maps, all_val_files, all_val_maps = \
-        site_loader(client_sites[i], client_pats[i], num_val_pats)
-        
+        site_loader(client_sites[i], 100, num_val_pats)#always load the maximum number of patients for that site then parse it down
+
+    unique_site_idx = unique_sites.index(client_sites[i]) #get site index for cursor
+    print('unique site idx:', unique_site_idx)
     # Subselect unique (by incrementing) training samples
-    client_idx = np.arange(cursors[i], cursors[i] + client_pats[i])
+    client_idx = np.arange(cursors[unique_site_idx], cursors[unique_site_idx] + client_pats[i]).astype(int)
+    print('client_idx:', client_idx)
+    print('client files:', [all_train_files[j] for j in client_idx])
+
     client_train_files, client_train_maps = \
-        all_train_files[client_idx], all_train_maps[client_idx]
-        
+        [all_train_files[j] for j in client_idx], [all_train_maps[j] for j in client_idx]
+
     # Increment cursor for the site
-    cursors[i] = cursors[i] + client_pats[i]
-    
+    cursors[unique_site_idx] = cursors[unique_site_idx] + client_pats[i]
+
     # Maintenance
     if client_sites[i] <= 3: # must be a knee site
         center_slice = center_slice_knee
@@ -213,18 +226,18 @@ for i in range(num_clients):
     elif client_sites[i] > 3: # must be a brain site
         center_slice = center_slice_brain
         num_slices   = num_slices_brain
-    
+
     # Create client dataset and loader
     train_dataset = MCFullFastMRI(client_train_files, num_slices, center_slice,
                                   downsample=hparams.downsample,
                                   mps_kernel_shape=hparams.mps_kernel_shape,
-                                  maps=client_train_maps, mask_params=train_mask_params, 
+                                  maps=client_train_maps, mask_params=train_mask_params,
                                   noise_stdev = 0.0)
     train_loader  = DataLoader(train_dataset, batch_size=hparams.batch_size,
                                shuffle=True, num_workers=num_workers, drop_last=True)
     train_loaders.append(copy.deepcopy(train_loader))
     iterators.append(iter(train_loaders[-1]))
-    
+
     # Create client dataset and loader
     val_dataset = MCFullFastMRI(all_val_files, num_slices, center_slice,
                                 downsample=hparams.downsample,
@@ -234,7 +247,7 @@ for i in range(num_clients):
     val_loader  = DataLoader(val_dataset, batch_size=hparams.batch_size,
                              shuffle=False, num_workers=num_workers, drop_last=True)
     val_loaders.append(copy.deepcopy(val_loader))
-    
+
 # Criterions
 ssim           = SSIMLoss().cuda()
 multicoil_loss = MCLoss().cuda()
@@ -246,7 +259,7 @@ optimizers = []
 schedulers = []
 for i in range(num_clients):
     optimizer = Adam(model.parameters(), lr=hparams.lr)
-    scheduler = StepLR(optimizer, hparams.step_size,
+    scheduler = StepLR(optimizer, hparams.decay_epochs,
                        gamma=hparams.decay_gamma)
     optimizers.append(optimizer)
     schedulers.append(scheduler)
@@ -280,14 +293,14 @@ local_dir = global_dir + '/N%d_n%d_lamInit%.3f' % (
         hparams.l2lam_init)
 if not os.path.isdir(local_dir):
     os.makedirs(local_dir)
-    
+
 # !!! Federation happens via these files
 download_file = local_dir + '/fed_download.pt'
 upload_files  = [local_dir + '/fed_upload%d.pt' % idx for idx in range(num_clients)]
-    
+
 # For each training-communication round
 for round_idx in range(num_rounds):
-    
+
     # Train the model for the given number of steps at each client
     for client_idx in range(num_clients):
         if round_idx == 0:
@@ -300,7 +313,7 @@ for round_idx in range(num_rounds):
             saved_model = torch.load(download_file)
             model.load_state_dict(saved_model['model_state_dict'])
             # !!! Warm start deprecated
-        
+
         # Fetch iterator
         iterator = iterators[client_idx]
         # Local updates performed by client for a number of steps
@@ -321,7 +334,7 @@ for round_idx in range(num_rounds):
                     sample[key] = sample[key].cuda()
                 except:
                     pass
-                
+
             # Get outputs
             est_img_kernel, est_map_kernel, est_ksp = \
                 model(sample, hparams.meta_unrolls,
@@ -383,16 +396,16 @@ for round_idx in range(num_rounds):
 
             # Verbose
             print('Round %d, Client %d, Step %d, Batch loss %.4f. Avg. SSIM %.4f, Avg. RSS %.4f, Avg. Coils %.4f, Avg. NMSE %.4f' % (
-                round_idx, client_idx, sample_idx, loss.item(), 
+                round_idx, client_idx, sample_idx, loss.item(),
                 running_ssim[client_idx], running_loss[client_idx], running_coil[client_idx],
                 running_nmse[client_idx]))
-            
+
         # After each round, save the local weights of all clients before downloading
         if os.path.exists(upload_files[client_idx]):
             os.remove(upload_files[client_idx])
         torch.save({'model_state_dict': model.state_dict()},
                    upload_files[client_idx])
-        
+
         # Save weights periodically
         if np.mod(round_idx + 1, save_interval) == 0:
             torch.save({
@@ -407,7 +420,7 @@ for round_idx in range(num_rounds):
                 'nmse_log': nmse_log,
                 'loss': loss,
                 'hparams': hparams,
-                'train_mask_params': train_mask_params}, local_dir + '/round' + 
+                'train_mask_params': train_mask_params}, local_dir + '/round' +
                 str(round_idx) + '_client'+ str(client_idx) + 'before_download.pt')
 
     # Step all schedulers
@@ -421,7 +434,7 @@ for round_idx in range(num_rounds):
         # Start with the first client
         saved_model = torch.load(upload_files[0])
         state_dict_accumulator.load_state_dict(saved_model['model_state_dict'])
-        state_dict_accumulator = state_dict_accumulator.image_net.state_dict()
+        state_dict_accumulator = state_dict_accumulator.state_dict()
 
         # Accumulate weights from all other clients
         for key in state_dict_accumulator:
@@ -429,29 +442,31 @@ for round_idx in range(num_rounds):
                 state_dict_transitive = MoDLDoubleUnroll(hparams)
                 temp_model = torch.load(upload_files[fed_idx])
                 state_dict_transitive.load_state_dict(temp_model['model_state_dict'])
-                state_dict_transitive = state_dict_transitive.image_net.state_dict()
+                state_dict_transitive = state_dict_transitive.state_dict()
                 state_dict_accumulator[key] = state_dict_accumulator[key] + state_dict_transitive[key]
-                
+
             # Average, not sum
             state_dict_accumulator[key] = state_dict_accumulator[key]/num_clients
 
         # Save ('download') the federated weights in a scratch file
         if os.path.exists(download_file):
             os.remove(download_file)
+        final_model = MoDLDoubleUnroll(hparams)
+        final_model.load_state_dict(state_dict_accumulator)
         # Clients will download this
-        torch.save({'model_state_dict': state_dict_accumulator}, download_file)
+        torch.save({'model_state_dict': final_model.state_dict()}, download_file)
 
     # Save and evaluate periodically after downloading
     if np.mod(round_idx + 1, save_interval) == 0:
         # Downloaded weights
         saved_model = torch.load(download_file)
         model.load_state_dict(saved_model['model_state_dict'])
-        
+
         # Switch to eval
         model.eval()
         running_SSIM_val = 0.0
         plt.figure()
-        
+
         # !!! For now, hardcoded to one validation set
         with torch.no_grad():
             for sample_idx, sample in tqdm(enumerate(val_loaders[0])):
@@ -483,7 +498,7 @@ for round_idx in range(num_rounds):
                                     sample['gt_ref_rss'].shape[-1])
                 gt_rss       = sample['gt_ref_rss']
                 data_range   = sample['data_range']
-                
+
                 # Add the first few ones to plot
                 if sample_idx < 4:
                     plt.subplot(2, 4, sample_idx+1)
@@ -496,18 +511,18 @@ for round_idx in range(num_rounds):
                 # SSIM loss with crop
                 ssim_loss = ssim(est_crop_rss[:,None], gt_rss[:,None], data_range)
                 running_SSIM_val = running_SSIM_val + (1-ssim_loss.item())
-            
+
             # Save
             plt.tight_layout()
             plt.savefig(local_dir + '/val_samples_round%d.png' % round_idx, dpi=300)
             plt.close()
-            
+
             # !!! Hardcoded to validate on the first client site only
             if client_sites[0] <= 3:
                 Val_SSIM.append(running_SSIM_val/(num_slices_knee*num_val_pats))
             elif client_sites[0] > 3:
                 Val_SSIM.append(running_SSIM_val/(num_slices_brain*num_val_pats))
-            
+
         # Plot validation metrics
         plt.figure()
         plt.subplot(1, 2, 1)
@@ -521,6 +536,6 @@ for round_idx in range(num_rounds):
         plt.savefig(local_dir + '/train_val_curves_site' + str(client_sites[0]) +
                     '_samples_round%d.png' % round_idx, dpi=300)
         plt.close()
-        
+
     # Back to train
     model.train()
