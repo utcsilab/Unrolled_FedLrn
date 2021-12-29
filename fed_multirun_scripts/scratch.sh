@@ -1,0 +1,2 @@
+python MoDL_FedAvg_train.py --GPU 3 --num_work 8 --ch 16 --num_pool 3 --client_pats 5 5 5 5 5 5 5 5 5 5 --client_sites 2 2 2 2 2 2 2 2 2 2 --share_int 10 --train_dilation 1 &
+python MoDL_FedAvg_train.py --GPU 4 --num_work 8 --ch 16 --num_pool 3 --client_pats 5 5 5 5 5 5 --client_sites 4 5 6 7 8 9 --share_int 10 --train_dilation 1 &

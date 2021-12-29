@@ -1,0 +1,8 @@
+python MoDL_FedAvg_train.py --mini_seed 1 --GPU 0 --num_work 3 --ch 16 --num_pool 3 --client_pats 5 5 5 5 5 5 5 5 5 5 --client_sites 2 2 2 2 2 2 2 2 2 2 --share_int 20 --train_dilation 20 &
+python MoDL_FedAvg_train.py --mini_seed 2 --GPU 1 --num_work 3 --ch 16 --num_pool 3 --client_pats 5 5 5 5 5 5 5 5 5 5 --client_sites 2 2 2 2 2 2 2 2 2 2 --share_int 10 --train_dilation 40 &
+python MoDL_FedAvg_train.py --mini_seed 3 --GPU 2 --num_work 3 --ch 16 --num_pool 3 --client_pats 5 5 5 5 5 5 5 5 5 5 --client_sites 5 5 5 5 5 5 5 5 5 5 --share_int 20 --train_dilation 20 &
+python MoDL_FedAvg_train.py --mini_seed 4 --GPU 3 --num_work 3 --ch 16 --num_pool 3 --client_pats 5 5 5 5 5 5 5 5 5 5 --client_sites 5 5 5 5 5 5 5 5 5 5 --share_int 10 --train_dilation 40 &
+python MoDL_FedAvg_train.py --mini_seed 5 --GPU 4 --num_work 3 --ch 16 --num_pool 3 --client_pats 5 5 5 5 5 5 5 5 5 5 --client_sites 1 2 3 4 5 6 7 8 9 10 --share_int 20 --train_dilation 20 &
+python MoDL_FedAvg_train.py --mini_seed 6 --GPU 5 --num_work 3 --ch 16 --num_pool 3 --client_pats 5 5 5 5 5 5 5 5 5 5 --client_sites 1 2 3 4 5 6 7 8 9 10 --share_int 10 --train_dilation 40 &
+python MoDL_FedAvg_train.py --mini_seed 7 --GPU 6 --num_work 3 --ch 16 --num_pool 3 --client_pats 5 5 5 5 5 5 --client_sites 4 5 6 7 8 9 --share_int 20 --train_dilation 40 &
+python MoDL_FedAvg_train.py --mini_seed 8 --GPU 7 --num_work 3 --ch 16 --num_pool 3 --client_pats 5 5 5 5 5 5 --client_sites 4 5 6 7 8 9 --share_int 10 --train_dilation 80 &

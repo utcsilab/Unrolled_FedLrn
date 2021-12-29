@@ -34,6 +34,7 @@ torch.backends.cudnn.benchmark = True
 def get_args():
     parser = ArgumentParser()
     parser.add_argument('--seed'    , type=int, default=1500     , help='random seed to use')
+    parser.add_argument('--mini_seed', type=int                  , help='an extra seed to shuffle clients')
     parser.add_argument('--GPU'     , type=int                   , help='GPU to Use')
     parser.add_argument('--num_work', type=int                   , help='number of workers to use')
     parser.add_argument('--train_dilation', type=int             , help='boost num rounds, save interval and decay in 24:1:16 ratio')
@@ -53,6 +54,7 @@ print(args)
 
 GPU_ID                = args.GPU
 global_seed           = args.seed
+mini_seed             = args.mini_seed
 num_workers           = args.num_work
 lr                    = args.LR
 unet_ch               = args.ch
@@ -70,6 +72,8 @@ num_val_pats          = 20
 # Immediately determine number of clients
 assert len(client_pats) == len(client_sites), 'Client args mismatch!'
 num_clients = len(client_pats)
+np.random.seed(mini_seed)
+client_perm = np.random.permutation(num_clients)
 
 # Determine if this is a multi-site setup or not
 # Currently just used to name a folder
@@ -191,8 +195,10 @@ total_params = np.sum([np.prod(p.shape) for p
 print('Total parameters %d' % total_params)
 
 ######## Get client datasets and dataloaders ############
-train_loaders, val_loaders = [], []
-cursors, iterators          = [], [] #make a cursor for each unique site(used (not client)
+train_loaders, val_loaders  = [None for idx in range(num_clients)], \
+    [None for idx in range(num_clients)]
+iterators = [None for idx in range(num_clients)]
+cursors   = [] #make a cursor for each unique site(used (not client)
 unique_sites = list(set(client_sites))
 num_unique = len(unique_sites)
 print('unique sites:', unique_sites)
@@ -201,9 +207,7 @@ for i in range(num_unique):
     cursors.append(0)
 
 # Get unique data for each client, from their own site
-print(num_clients)
-for i in range(num_clients):
-
+for i in client_perm:
     # Get all the filenames from the site
     all_train_files, all_train_maps, all_val_files, all_val_maps = \
         site_loader(client_sites[i], 100, num_val_pats)#always load the maximum number of patients for that site then parse it down
@@ -211,7 +215,8 @@ for i in range(num_clients):
     unique_site_idx = unique_sites.index(client_sites[i]) #get site index for cursor
     print('unique site idx:', unique_site_idx)
     # Subselect unique (by incrementing) training samples
-    client_idx = np.arange(cursors[unique_site_idx], cursors[unique_site_idx] + client_pats[i]).astype(int)
+    client_idx = np.arange(cursors[unique_site_idx], 
+           cursors[unique_site_idx] + client_pats[i]).astype(int)
     print('client_idx:', client_idx)
     print('client files:', [all_train_files[j] for j in client_idx])
 
@@ -236,9 +241,10 @@ for i in range(num_clients):
                                   maps=client_train_maps, mask_params=train_mask_params,
                                   noise_stdev = 0.0)
     train_loader  = DataLoader(train_dataset, batch_size=hparams.batch_size,
-                               shuffle=True, num_workers=num_workers, drop_last=True)
-    train_loaders.append(copy.deepcopy(train_loader))
-    iterators.append(iter(train_loaders[-1]))
+                               shuffle=True, num_workers=num_workers, drop_last=True,
+                               pin_memory=True)
+    train_loaders[i] = copy.deepcopy(train_loader)
+    iterators[i]     = iter(train_loaders[i])
 
     # Create client dataset and loader
     val_dataset = MCFullFastMRI(all_val_files, num_slices, center_slice,
@@ -248,7 +254,7 @@ for i in range(num_clients):
                                 noise_stdev = 0.0, scramble=True)
     val_loader  = DataLoader(val_dataset, batch_size=hparams.batch_size,
                              shuffle=False, num_workers=num_workers, drop_last=True)
-    val_loaders.append(copy.deepcopy(val_loader))
+    val_loaders[i] = copy.deepcopy(val_loader)
 
 # Criterions
 ssim           = SSIMLoss().cuda()
@@ -273,7 +279,7 @@ coil_log, nmse_log      = [], []
 running_training        = []
 running_loss, running_nmse = [], []
 running_ssim, running_coil = [], []
-Val_SSIM = []
+Val_SSIM = [] # !!! Only supports one 'client' = downloaded model
 
 for i in range(num_clients):
     best_loss.append(np.inf)
@@ -287,7 +293,6 @@ for i in range(num_clients):
     running_nmse.append(0.)
     running_ssim.append(-1.)
     running_coil.append(0.)
-    Val_SSIM.append([])
 
 # Another directory
 local_dir = global_dir + '/N%d_n%d_lamInit%.3f' % (
@@ -320,19 +325,16 @@ for round_idx in range(num_rounds):
             model.load_state_dict(saved_model['model_state_dict'])
             # !!! Warm start deprecated
 
-        # Fetch iterator
-        iterator = iterators[client_idx]
         # Local updates performed by client for a number of steps
         for sample_idx in tqdm(range(share_int)):
             try:
                 # Get next batch
-                sample = next(iterator)
+                sample = next(iterators[client_idx])
             except:
                 # Reset datasets
                 print('reset iterator for client %d' % client_idx)
                 iterators[client_idx] = iter(train_loaders[client_idx])
-                iterator              = iterators[client_idx]
-                sample                = next(iterator)
+                sample                = next(iterators[client_idx] )
 
             # Move to CUDA
             for key in sample.keys():
@@ -401,7 +403,8 @@ for round_idx in range(num_rounds):
             optimizers[client_idx].step()
 
             # Verbose
-            print('Round %d, Client %d, Step %d, Batch loss %.4f. Avg. SSIM %.4f, Avg. RSS %.4f, Avg. Coils %.4f, Avg. NMSE %.4f' % (
+            print('Round %d, Client %d, Step %d, Batch loss %.4f. Avg. SSIM %.4f, \
+Avg. RSS %.4f, Avg. Coils %.4f, Avg. NMSE %.4f' % (
                 round_idx, client_idx, sample_idx, loss.item(),
                 running_ssim[client_idx], running_loss[client_idx], running_coil[client_idx],
                 running_nmse[client_idx]))
@@ -504,11 +507,11 @@ for round_idx in range(num_rounds):
                 data_range   = sample['data_range']
 
                 # Add the first few ones to plot
-                if sample_idx < 4:
-                    plt.subplot(2, 4, sample_idx+1)
+                if sample_idx >=4 and sample_idx < 8:
+                    plt.subplot(2, 4, sample_idx-3)
                     plt.imshow(torch.flip(sample['gt_ref_rss'][0],[0,1]).cpu().detach().numpy(), vmin=0., vmax=torch.max(sample['gt_ref_rss'][0]), cmap='gray')
                     plt.axis('off'); plt.title('GT RSS')
-                    plt.subplot(2, 4, sample_idx+1+4*1)
+                    plt.subplot(2, 4, sample_idx-3+4*1)
                     plt.imshow(torch.flip(est_crop_rss[0],[0,1]).cpu().detach().numpy(), vmin=0., vmax=torch.max(est_crop_rss[0]), cmap='gray')
                     plt.axis('off'); plt.title('SSIM: %.3f' % (1-ssim_loss.item()))
 
@@ -530,8 +533,8 @@ for round_idx in range(num_rounds):
         # Plot validation metrics
         plt.figure()
         plt.subplot(1, 2, 1)
-        plt.title('Training SSIM')
-        plt.plot(np.asarray(ssim_log))
+        plt.title('Training SSIM - Client 0')
+        plt.plot(np.asarray(ssim_log[0]))
         plt.subplot(1, 2, 2)
         plt.title('Validation SSIM')
         plt.plot(np.asarray(Val_SSIM))
