@@ -36,13 +36,10 @@ def get_args():
     parser.add_argument('--seed'    , type=int, default=1500     , help='random seed to use')
     parser.add_argument('--GPU'     , type=int                   , help='GPU to Use')
     parser.add_argument('--num_work', type=int                   , help='number of workers to use')
-    parser.add_argument('--num_rounds', type=int                 , help='number of training+communication rounds')
+    parser.add_argument('--train_dilation', type=int             , help='boost num rounds, save interval and decay in 24:1:16 ratio')
     parser.add_argument('--ch'      , type=int                   , help='number of channels in Unet')
     parser.add_argument('--num_pool', type=int                   , help='number of pool layer in UNet')
     parser.add_argument('--LR'      , type=float, default=3e-4   , help='learning rate for training')
-    parser.add_argument('--decay_ep', type=int                   , help='number of epochs after which LR is decayed')
-    parser.add_argument('--save_interval', type=int              , help='save once every this many epochs')
-    parser.add_argument('--comp_val'     , type=int              , help='do you want to compute validation results every epoch')
     parser.add_argument('--client_pats' , nargs='+', type=int, help='Vector of client samples (patients, 10 slices each)')
     parser.add_argument('--client_sites', nargs='+', type=int, help='Vector of client sites (local data distribution)')
     parser.add_argument('--share_int'   , '--share_int', type= int, default=12, help='how often do we share weights(measured in steps)')
@@ -57,12 +54,15 @@ print(args)
 GPU_ID                = args.GPU
 global_seed           = args.seed
 num_workers           = args.num_work
-num_rounds            = args.num_rounds
 lr                    = args.LR
-decay_epochs          = args.decay_ep
 unet_ch               = args.ch
 unet_num_pool         = args.num_pool
-save_interval         = args.save_interval
+
+# Inferred in the ratio 24:1:16
+num_rounds            = args.train_dilation * 24
+save_interval         = args.train_dilation * 1
+decay_epochs          = args.train_dilation * 16
+
 share_int             = args.share_int
 client_pats           = args.client_pats
 client_sites          = args.client_sites
