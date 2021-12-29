@@ -128,13 +128,13 @@ for train_pats, val_interval, num_epochs, decay_ep, local_site in \
     hparams.kernel_size  = 3
     hparams.in_channels  = 2
     
-    ######################Specify Weight Sharing Method#########################
+    ######################Specify Architecture Sharing Method#########################
     hparams.share_mode = 'Seperate' # either Seperate, Full_avg or Split_avg for how we want to share weights
     ##########################################################################
     if hparams.share_mode != 'Seperate':
-    #the following parameters are only really used if using ReNetSplit for FedLrning. They specify how you want to split the ResNet
+    #cthe following parameters are only really used if using ReNetSplit for FedLrning. They specify how you want to split the ResNet
         hparams.img_sep         = False # Do we use separate networks at each unroll?
-        hparams.all_sep         = False  #allow all unrolls to be unique within model(True) or create just 2 networks(False): Local & Global
+        hparams.all_sep         = False # allow all unrolls to be unique within model(True) or create just 2 networks(False): Local & Global
         hparams.num_blocks1     = 4
         hparams.num_blocks2     = 2
         hparams.share_global    = 2
