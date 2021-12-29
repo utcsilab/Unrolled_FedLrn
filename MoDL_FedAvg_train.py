@@ -168,8 +168,10 @@ hparams.coil_lam = 0.
 hparams.ssim_lam = 1.
 # print(multi_site, num_clients, share_int, hparams.img_arch, hparams.img_blocks, hparams.img_channels, np.min(client_pats), global_seed)
 #################Set save location directory################################
-global_dir = 'Results/federated/multiSite%d_clients%d/sync%d/%s_pool%d_ch%d/num_train_patients%d/seed%d' % (
-      multi_site, num_clients, share_int, hparams.img_arch,
+global_dir = 'Results/federated/multiSite%d_clients%d_siteMin%d_siteMax%d/\
+sync%d/%s_pool%d_ch%d/num_train_patients%d/seed%d' % (
+      multi_site, num_clients, np.min(client_sites),
+      np.max(client_sites), share_int, hparams.img_arch,
       hparams.img_blocks, hparams.img_channels,
       np.min(client_pats), global_seed)
 if not os.path.exists(global_dir):
@@ -183,9 +185,6 @@ scratch_model = MoDLDoubleUnroll(hparams)
 
 # Switch to train
 model.train()
-torch.save({
-    'model': model.state_dict(),
-    }, global_dir + '/Initial_weights.pt')
 # Count parameters
 total_params = np.sum([np.prod(p.shape) for p
                        in model.parameters() if p.requires_grad])
@@ -296,6 +295,10 @@ local_dir = global_dir + '/N%d_n%d_lamInit%.3f' % (
         hparams.l2lam_init)
 if not os.path.isdir(local_dir):
     os.makedirs(local_dir)
+# Save initial weights
+torch.save({
+    'model': model.state_dict(),
+    }, local_dir + '/Initial_weights.pt')
 
 # !!! Federation happens via these files
 download_file = local_dir + '/fed_download.pt'
@@ -309,7 +312,7 @@ for round_idx in range(num_rounds):
         if round_idx == 0:
             # if this is the first round then every client model starts from the same initialization
             print('loading initial weights')
-            saved_model = torch.load(global_dir + '/Initial_weights.pt')
+            saved_model = torch.load(local_dir + '/Initial_weights.pt')
             model.load_state_dict(saved_model['model'])
         else:
             # 'Download 'weights from server
@@ -320,7 +323,7 @@ for round_idx in range(num_rounds):
         # Fetch iterator
         iterator = iterators[client_idx]
         # Local updates performed by client for a number of steps
-        for sample_idx in range(share_int):
+        for sample_idx in tqdm(range(share_int)):
             try:
                 # Get next batch
                 sample = next(iterator)
