@@ -311,9 +311,18 @@ nmse_loss      = NMSELoss()
 # Get optimizer and scheduler (One for each site)
 optimizers = []
 schedulers = []
+
+client_beta1 = 1
+client_beta2 = 1
+if per_lam:
+    #do only SGD on lambda values if using personalized lambdas
+    client_beta2 = 0
+
+
 for i in range(num_clients):
     if client_opt == 'Adam':
-        optimizer = Adam(model.parameters(), lr=hparams.lr)
+        optimizer = Adam([{"params": model.image_net.parameters()},
+          {"params": list(model.block2_l2lam), "beta1": client_beta1, "beta2": client_beta2}],lr=hparams.lr)
     elif client_opt == 'SGD':
         optimizer = SGD(model.parameters(), lr=hparams.lr)
     else:
@@ -419,6 +428,9 @@ for round_idx in range(num_rounds):
             #if lambda is not personalized load the full model as normal
             saved_model = torch.load(download_file)
             model.load_state_dict(saved_model['model_state_dict'])
+            if per_lam:
+                #if lambda is personalized load the lambda from the last upload prior to download
+                model.state_dict()['block2_l2lam'] = torch.load(upload_files[client_idx])['model_state_dict']['block2_l2lam']
             # !!! Warm start deprecated
 
         # Local updates performed by client for a number of steps
