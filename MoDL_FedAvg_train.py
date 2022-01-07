@@ -41,6 +41,8 @@ def get_args():
     parser.add_argument('--ch'      , type=int                   , help='number of channels in Unet')
     parser.add_argument('--num_pool', type=int                   , help='number of pool layer in UNet')
     parser.add_argument('--LR'      , type=float, default=3e-4   , help='learning rate for training')
+    parser.add_argument('--resume',   type=int, default=0        , help='continue training or not')
+    parser.add_argument('--resume_round', type=int, default=9999 , help='what round to resume from')
     parser.add_argument('--client_opt', type=str, default='Adam' , help='core optimizer for each client')
     parser.add_argument('--client_pats' , nargs='+', type=int, help='Vector of client samples (patients, 10 slices each)')
     parser.add_argument('--client_sites', nargs='+', type=int, help='Vector of client sites (local data distribution)')
@@ -58,10 +60,12 @@ global_seed           = args.seed
 mini_seed             = args.mini_seed
 num_workers           = args.num_work
 lr                    = args.LR
+resume_training       = bool(args.resume)
+resume_round          = args.resume_round
 unet_ch               = args.ch
 unet_num_pool         = args.num_pool
 
-# Inferred in the ratio 24:1:16
+# Follow the ratio 24:1:16
 num_rounds            = args.train_dilation * 24
 save_interval         = args.train_dilation * 1
 decay_epochs          = args.train_dilation * 16
@@ -73,8 +77,8 @@ client_sites          = args.client_sites
 
 # More federation stuff
 client_opt            = args.client_opt
-
 num_val_pats          = 20
+
 # Immediately determine number of clients
 assert len(client_pats) == len(client_sites), 'Client args mismatch!'
 num_clients = len(client_pats)
@@ -176,14 +180,17 @@ hparams.batch_size   = 1 # !!! Unsupported !!!
 # Loss lambdas
 hparams.coil_lam = 0.
 hparams.ssim_lam = 1.
-# print(multi_site, num_clients, share_int, hparams.img_arch, hparams.img_blocks, hparams.img_channels, np.min(client_pats), global_seed)
 #################Set save location directory################################
-global_dir = 'Results/federated/multiSite%d_client%s_clients%d_siteMin%d_siteMax%d/\
-sync%d/%s_pool%d_ch%d/num_train_patients%d/seed%d' % (
-      multi_site, client_opt, num_clients, np.min(client_sites),
-      np.max(client_sites), share_int, hparams.img_arch,
+# Auxiliary strings
+site_string = '_'.join([str(client_sites[idx]) for idx in range(num_clients)])
+pats_string = '_'.join([str(client_pats[idx]) for idx in range(num_clients)])
+
+global_dir = 'Results/federated/client%s_clients%d_sites_%s/\
+sync%d/%s_pool%d_ch%d/train_pats_%s/seed%d' % (
+      client_opt, num_clients,
+      site_string, share_int, hparams.img_arch,
       hparams.img_blocks, hparams.img_channels,
-      np.min(client_pats), global_seed)
+      pats_string, global_seed)
 if not os.path.exists(global_dir):
     os.makedirs(global_dir)
 
@@ -213,6 +220,8 @@ for i in range(num_unique):
     cursors.append(0)
 
 # Get unique data for each client, from their own site
+# Also store them for exact reproducibility
+global_client_files, global_client_maps = [], []
 for i in client_perm:
     # Get all the filenames from the site
     all_train_files, all_train_maps, all_val_files, all_val_maps = \
@@ -228,6 +237,10 @@ for i in client_perm:
 
     client_train_files, client_train_maps = \
         [all_train_files[j] for j in client_idx], [all_train_maps[j] for j in client_idx]
+
+    # Log all client train files
+    global_client_files.append(client_train_files)
+    global_client_maps.append(client_train_maps)
 
     # Increment cursor for the site
     cursors[unique_site_idx] = cursors[unique_site_idx] + client_pats[i]
@@ -306,10 +319,53 @@ for i in range(num_clients):
     running_ssim.append(-1.)
     running_coil.append(0.)
 
-# Another directory
+# Inner directory
 local_dir = global_dir + '/N%d_n%d_lamInit%.3f' % (
         hparams.meta_unrolls, hparams.block1_max_iter,
         hparams.l2lam_init)
+
+# If a directory already exists and we want to, resume training
+if os.path.isdir(local_dir) and resume_training is True:
+    # Overwrite directory, initial weights and metrics
+    past_dir   = copy.deepcopy(local_dir)
+    # Manually federate model and synchronize clients based on target round
+    # !!! INEXACT if the communication interval doesn't divide 24
+    for fed_idx in range(num_clients):
+        local_file = past_dir + '/round' + \
+            str(resume_round) + '_client'+ str(fed_idx) + '_before_download.pt'
+        local_contents = torch.load(local_file)
+        local_model_state = local_contents['model_state_dict']
+        
+        # Start with the first client
+        if fed_idx == 0:
+            local_accumulator = copy.deepcopy(local_model_state)
+        else:
+            for key in local_accumulator.keys():
+                local_accumulator[key] = local_accumulator[key] + \
+                    copy.deepcopy(local_model_state[key])
+        
+        # Also load client optimizers and schedulers
+        optimizers[fed_idx].load_state_dict(local_contents['optimizer_state_dict'])
+        schedulers[fed_idx].load_state_dict(local_contents['scheduler_state_dict'])
+        
+    for key in local_accumulator.keys():
+        # Average at the end, not sum
+        local_accumulator[key] = local_accumulator[key]/num_clients
+    
+    # Load the latest federated model
+    model.load_state_dict(local_accumulator)
+    print('Successfuly federated and loaded a pretrained model!')
+    
+    # Overwrite local directory
+    local_dir = global_dir + '/N%d_n%d_lamInit%.3f_continued%d' % (
+            hparams.meta_unrolls, hparams.block1_max_iter,
+            hparams.l2lam_init, resume_round)
+# Create local directory
+if resume_training is True and os.path.isdir(local_dir):
+    print('Saving in %s, but it already exists!' % local_dir)
+    assert False
+    
+# Create directory
 if not os.path.isdir(local_dir):
     os.makedirs(local_dir)
 # Save initial weights
@@ -435,6 +491,8 @@ Avg. RSS %.4f, Avg. Coils %.4f, Avg. NMSE %.4f' % (
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizers[client_idx].state_dict(),
                 'scheduler_state_dict': schedulers[client_idx].state_dict(),
+                'client_files': global_client_files[client_idx],
+                'client_maps': global_client_files[client_idx],
                 'ssim_log': ssim_log,
                 'loss_log': loss_log,
                 'coil_log': coil_log,
@@ -555,6 +613,12 @@ Avg. RSS %.4f, Avg. Coils %.4f, Avg. NMSE %.4f' % (
         plt.savefig(local_dir + '/train_val_curves_site' + str(client_sites[0]) +
                     '_samples_round%d.png' % round_idx, dpi=300)
         plt.close()
+        
+        # Save validation metrics
+        torch.save({'val_ssim': np.asarray(Val_SSIM),
+                    'train_ssim': np.asarray(ssim_log[0]),
+                    'model_state': model.state_dict()}, # Federated
+            local_dir + '/inference_client0_round%d.pt' % round_idx)
 
     # Back to train
     model.train()
