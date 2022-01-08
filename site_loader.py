@@ -18,8 +18,8 @@ def site_loader(site_num, train_pat_count, val_pat_count):
     ## Legend of training sites
     # 1 - Knee PDFS 3T
     # 2 - Knee PDFS 1.5T
-    # 3 - Brain PD 3T
-    # 4 - Brain PD 1.5T
+    # 3 - Knee PDNFS 3T
+    # 4 - Knee PDNFS 1.5T
     # 5 - Brain T2 3T
     # 6 - Brain T2 1.5T
     # 7 - Brain FLAIR 3T
@@ -30,8 +30,8 @@ def site_loader(site_num, train_pat_count, val_pat_count):
     # 12 - Brain T1 1.5T
 
     # Core directories
-    core_train_dir = '/data/fed_sites/Training'
-    core_val_dir   = '/data/fed_sites/Validation'
+    core_train_dir = '/csiNAS/brett/fed_sites_new/Training'
+    core_val_dir   = '/csiNAS/brett/fed_sites_new/Validation'
 
     # Site directories
     train_ksp_dir  = os.path.join(core_train_dir, 'site%d/ksp' % site_num)
