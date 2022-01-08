@@ -606,7 +606,7 @@ Avg. RSS %.4f, Avg. Coils %.4f, Avg. NMSE %.4f' % (
         plt.title('Training SSIM - Client 0')
         plt.plot(np.asarray(ssim_log[0]))
         plt.subplot(1, 2, 2)
-        plt.title('Validation SSIM')
+        plt.title('Validation SSIM - Federated')
         plt.plot(np.asarray(Val_SSIM))
         # Save
         plt.tight_layout()

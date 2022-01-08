@@ -90,11 +90,8 @@ beta2                 = args.beta2
 
 # More federation stuff
 client_opt            = args.client_opt
+per_lam               = args.per_lam # Personalize lambda or not
 num_val_pats          = 20
-
-
-per_lam               = args.per_lam
-
 
 # Immediately determine number of clients
 assert len(client_pats) == len(client_sites), 'Client args mismatch!'
@@ -102,13 +99,7 @@ num_clients = len(client_pats)
 np.random.seed(mini_seed)
 client_perm = np.random.permutation(num_clients)
 
-# Determine if this is a multi-site setup or not
-# Currently just used to name a folder
-if len(np.unique(client_sites)) == 1:
-    multi_site = False
-else:
-    multi_site = True
-
+# GPU
 os.environ["CUDA_DEVICE_ORDER"]    = "PCI_BUS_ID";
 os.environ["CUDA_VISIBLE_DEVICES"] = str(GPU_ID)
 
@@ -202,12 +193,12 @@ hparams.ssim_lam = 1.
 site_string = '_'.join([str(client_sites[idx]) for idx in range(num_clients)])
 pats_string = '_'.join([str(client_pats[idx]) for idx in range(num_clients)])
 
-global_dir = 'Results/federated/client%s_clients%d_sites_%s/personalized_lambda_%d/%s_tau%.3f_b1%.3f_b2%.3f_eta%.3f/\
+global_dir = 'Results/client%s_clients%d_sites%s/personalLam%d/%s_tau%.1e_b1%.1e_b2%.1e_eta%.1e/\
 sync%d/%s_pool%d_ch%d/train_pats_%s/seed%d' % (
-      client_opt, num_clients,
-      site_string, per_lam, Adaptive_alg, tau, beta1, beta2, eta, share_int, hparams.img_arch,
-      hparams.img_blocks, hparams.img_channels,
-      pats_string, global_seed)
+      client_opt, num_clients, site_string, per_lam, Adaptive_alg,
+      tau, beta1, beta2, eta, share_int, hparams.img_arch,
+      hparams.img_blocks, hparams.img_channels, pats_string,
+      global_seed)
 if not os.path.exists(global_dir):
     os.makedirs(global_dir)
 
@@ -224,15 +215,10 @@ total_params = np.sum([np.prod(p.shape) for p
                        in model.parameters() if p.requires_grad])
 print('Total parameters %d' % total_params)
 
-
-
-
 #####create initial v_t which is >= tau**2
 v_t_init = copy.deepcopy(model.state_dict())
 for key in v_t_init:
     v_t_init[key] = 5 * tau**2
-
-
 
 ######## Get client datasets and dataloaders ############
 train_loaders, val_loaders  = [None for idx in range(num_clients)], \
@@ -429,8 +415,9 @@ for round_idx in range(num_rounds):
             saved_model = torch.load(download_file)
             model.load_state_dict(saved_model['model_state_dict'])
             if per_lam:
-                #if lambda is personalized load the lambda from the last upload prior to download
-                model.state_dict()['block2_l2lam'] = torch.load(upload_files[client_idx])['model_state_dict']['block2_l2lam']
+                # if lambda is personalized load the lambda from the last upload prior to download
+                model.state_dict()['block2_l2lam'] = torch.load(
+                    upload_files[client_idx])['model_state_dict']['block2_l2lam']
             # !!! Warm start deprecated
 
         # Local updates performed by client for a number of steps
@@ -517,18 +504,16 @@ Avg. RSS %.4f, Avg. Coils %.4f, Avg. NMSE %.4f' % (
                 running_ssim[client_idx], running_loss[client_idx], running_coil[client_idx],
                 running_nmse[client_idx]))
 
-
         if round_idx == 0:
             model_prev_ep = torch.load(local_dir + '/Initial_weights.pt')['model']
-            delta_i = copy.deepcopy(model_prev_ep) #create container with all relavent keys
+            delta_i = copy.deepcopy(model_prev_ep) # create container with all relavent keys
             for key in model_prev_ep:
-                delta_i[key]    = model.state_dict()[key] - model_prev_ep[key]
-
+                delta_i[key] = model.state_dict()[key] - model_prev_ep[key]
         else:
-            model_prev_ep = torch.load(download_file)['model_state_dict'] #load previous model present at download
+            model_prev_ep = torch.load(download_file)['model_state_dict'] # load previous model present at download
             delta_i = copy.deepcopy(model_prev_ep) #create container with all relavent keys
             for key in model_prev_ep:
-                delta_i[key]    = model.state_dict()[key] - model_prev_ep[key]
+                delta_i[key] = model.state_dict()[key] - model_prev_ep[key]
 
         # After each round, save the local weights of all clients before downloading
         if os.path.exists(upload_files[client_idx]):
@@ -567,31 +552,33 @@ Avg. RSS %.4f, Avg. Coils %.4f, Avg. NMSE %.4f' % (
         print("Federated weight averaging occuring at the end of the round")
         # Algorithm 2, Line 10 in ICLR paper
         ag_delta = torch.load(upload_files[0])['delta_i'] #load first delta_i
-        delta_t  = copy.deepcopy(model.state_dict()) #create container for storing weighted avereges of delta
-        v_t = copy.deepcopy(model.state_dict()) #create another model sized container for v_t
+        delta_t  = copy.deepcopy(model.state_dict()) # create container for storing weighted avereges of delta
+        v_t      = copy.deepcopy(model.state_dict()) # create another model sized container for v_t
 
-        if round_idx >0:
-            #if this is the first round there is no previou delta_t or v_t_prev
+        if round_idx > 0:
+            # if this is the first round there is no previou delta_t or v_t_prev
             delta_t_prev = torch.load(download_file)['delta_t']
-            v_t_prev = torch.load(download_file)['v_t']
+            v_t_prev     = torch.load(download_file)['v_t']
         else:
-            v_t_prev = v_t_init
+            v_t_prev     = v_t_init
 
-        for fed_idx in range(1,num_clients):
+        # Accumulate model differences
+        for fed_idx in range(1, num_clients):
             for key in ag_delta:
                 ag_delta[key] = ag_delta[key] + torch.load(upload_files[fed_idx])['delta_i'][key]
+               
+        # Momentum for delta_t
         for key in delta_t:
             if round_idx > 0:
                 delta_t[key] = beta1*delta_t_prev[key] + ((1-beta1)/num_clients)*ag_delta[key]
             else:
                 #if this is the first round there is no previous delta_t
                 delta_t[key] = ((1-beta1)/num_clients)*ag_delta[key]
-
-        v_t = copy.deepcopy(model.state_dict()) #create another model sized container for v_t
-
+                
+        # Update v_t
         if Adaptive_alg == 'FedAdaGrad':
             for key in v_t:
-                v_t[key] = v_t_prev[key] + delta_t[key]**2
+                v_t[key] = v_t_prev[key] + delta_t[key] ** 2
         elif Adaptive_alg == 'FedYogi':
             for key in v_t:
                 v_t[key] = v_t_prev[key] - (1-beta2)*(delta_t[key]**2) * (torch.sign(v_t_prev[key]-delta_t[key]**2))
@@ -599,19 +586,16 @@ Avg. RSS %.4f, Avg. Coils %.4f, Avg. NMSE %.4f' % (
             for key in v_t:
                 v_t[key] = beta2 * v_t_prev[key] + (1-beta2)*delta_t[key]**2
 
+        # Load previous weights
+        if round_idx == 0:
+            local_contents = torch.load(local_dir + '/Initial_weights.pt')['model']
+        else:
+            local_contents = torch.load(download_file)['model_state_dict']
+
+        # Global update step
         final_weights = copy.deepcopy(model.state_dict()) #create container for final model weights
         for key in final_weights:
-            if round_idx == 0:
-                final_weights[key] = torch.load(local_dir + '/Initial_weights.pt')['model'][key] + eta * delta_t[key]/(torch.sqrt(v_t[key]) + tau)
-            else:
-                final_weights[key] = torch.load(download_file)['model_state_dict'][key] + eta * delta_t[key]/(torch.sqrt(v_t[key]) + tau)
-
-
-
-
-
-
-
+            final_weights[key] = local_contents[key] + eta * delta_t[key]/(torch.sqrt(v_t[key]) + tau)
 
     # Save ('download') the federated weights in a scratch file
     if os.path.exists(download_file):
@@ -621,7 +605,7 @@ Avg. RSS %.4f, Avg. Coils %.4f, Avg. NMSE %.4f' % (
                 'delta_t': delta_t,
                 'v_t': v_t}, download_file)
 
-    #periodically save the federated weights and adaptive update parameters
+    # Periodically save the federated weights and adaptive update parameters
     if np.mod(round_idx + 1, save_interval) == 0:
         torch.save({
             'round': round_idx,
@@ -629,12 +613,6 @@ Avg. RSS %.4f, Avg. Coils %.4f, Avg. NMSE %.4f' % (
             'delta_t': delta_t,
             'v_t': v_t,
             'hparams': hparams}, local_dir + '/round' + str(round_idx) + '_download_material.pt')
-
-
-
-
-
-
 
     # Save and evaluate periodically after downloading
     if np.mod(round_idx + 1, save_interval) == 0:
