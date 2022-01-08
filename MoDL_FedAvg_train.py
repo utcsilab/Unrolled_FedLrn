@@ -47,6 +47,7 @@ def get_args():
     parser.add_argument('--client_pats' , nargs='+', type=int, help='Vector of client samples (patients, 10 slices each)')
     parser.add_argument('--client_sites', nargs='+', type=int, help='Vector of client sites (local data distribution)')
     parser.add_argument('--share_int'   , '--share_int', type= int, default=12, help='how often do we share weights(measured in steps)')
+    parser.add_argument('--per_lam'   , '--per_lam', type= int, default=0, help='0 for sharing lambda 1 for personalizing lambda')
 
     args = parser.parse_args()
     return args
@@ -77,6 +78,7 @@ client_sites          = args.client_sites
 
 # More federation stuff
 client_opt            = args.client_opt
+per_lam               = bool(args.per_lam)
 num_val_pats          = 20
 
 # Immediately determine number of clients
@@ -185,26 +187,22 @@ hparams.ssim_lam = 1.
 site_string = '_'.join([str(client_sites[idx]) for idx in range(num_clients)])
 pats_string = '_'.join([str(client_pats[idx]) for idx in range(num_clients)])
 
-global_dir = 'Results/federated/client%s_clients%d_sites_%s/\
+global_dir = 'Results/federated/client%s_clients%d_sites%s/personalLam%d/\
 sync%d/%s_pool%d_ch%d/train_pats_%s/seed%d' % (
       client_opt, num_clients,
-      site_string, share_int, hparams.img_arch,
+      site_string, per_lam, share_int, hparams.img_arch,
       hparams.img_blocks, hparams.img_channels,
       pats_string, global_seed)
 if not os.path.exists(global_dir):
     os.makedirs(global_dir)
 
 ######################initialize model using hparams########################
-model = MoDLDoubleUnroll(hparams)
-model = model.cuda()
 # Initialize scratch model
 scratch_model = MoDLDoubleUnroll(hparams)
-
-# Switch to train
-model.train()
+scratch_model = scratch_model.cuda()
 # Count parameters
 total_params = np.sum([np.prod(p.shape) for p
-                       in model.parameters() if p.requires_grad])
+                       in scratch_model.parameters() if p.requires_grad])
 print('Total parameters %d' % total_params)
 
 ######## Get client datasets and dataloaders ############
@@ -246,10 +244,10 @@ for i in client_perm:
     cursors[unique_site_idx] = cursors[unique_site_idx] + client_pats[i]
 
     # Maintenance
-    if client_sites[i] <= 3: # must be a knee site
+    if client_sites[i] <= 4: # must be a knee site
         center_slice = center_slice_knee
         num_slices   = num_slices_knee
-    elif client_sites[i] > 3: # must be a brain site
+    elif client_sites[i] > 4: # must be a brain site
         center_slice = center_slice_brain
         num_slices   = num_slices_brain
 
@@ -281,17 +279,24 @@ multicoil_loss = MCLoss().cuda()
 pixel_loss     = torch.nn.MSELoss(reduction='sum')
 nmse_loss      = NMSELoss()
 
-# Get optimizer and scheduler (One for each site)
-optimizers = []
-schedulers = []
+# Get optimizer, scheduler and model (one per client)
+optimizers, schedulers = [], []
+client_models          = []
 for i in range(num_clients):
+    # Client models
+    local_model = MoDLDoubleUnroll(hparams)
+    local_model = local_model.cuda()
+    # Switch to train
+    local_model.train()
+    client_models.append(copy.deepcopy(local_model))
+    
+    # Client optimizers and schedulers
     if client_opt == 'Adam':
-        optimizer = Adam(model.parameters(), lr=hparams.lr)
+        optimizer = Adam(client_models[i].parameters(), lr=hparams.lr)
     elif client_opt == 'SGD':
-        optimizer = SGD(model.parameters(), lr=hparams.lr)
+        optimizer = SGD(client_models[i].parameters(), lr=hparams.lr)
     else:
         assert False, 'Incorrect client optimizer!'
-        
     scheduler = StepLR(optimizer, hparams.decay_epochs,
                        gamma=hparams.decay_gamma)
     optimizers.append(optimizer)
@@ -353,13 +358,13 @@ if os.path.isdir(local_dir) and resume_training is True:
         local_accumulator[key] = local_accumulator[key]/num_clients
     
     # Load the latest federated model
-    model.load_state_dict(local_accumulator)
+    scratch_model.load_state_dict(local_accumulator)
     print('Successfuly federated and loaded a pretrained model!')
-    
     # Overwrite local directory
     local_dir = global_dir + '/N%d_n%d_lamInit%.3f_continued%d' % (
             hparams.meta_unrolls, hparams.block1_max_iter,
             hparams.l2lam_init, resume_round)
+    
 # Create local directory
 if resume_training is True and os.path.isdir(local_dir):
     print('Saving in %s, but it already exists!' % local_dir)
@@ -370,7 +375,7 @@ if not os.path.isdir(local_dir):
     os.makedirs(local_dir)
 # Save initial weights
 torch.save({
-    'model': model.state_dict(),
+    'model': scratch_model.state_dict(),
     }, local_dir + '/Initial_weights.pt')
 
 # !!! Federation happens via these files
@@ -379,19 +384,25 @@ upload_files  = [local_dir + '/fed_upload%d.pt' % idx for idx in range(num_clien
 
 # For each training-communication round
 for round_idx in range(num_rounds):
-
     # Train the model for the given number of steps at each client
     for client_idx in range(num_clients):
         if round_idx == 0:
             # if this is the first round then every client model starts from the same initialization
             print('loading initial weights')
             saved_model = torch.load(local_dir + '/Initial_weights.pt')
-            model.load_state_dict(saved_model['model'])
+            client_models[client_idx].load_state_dict(saved_model['model'])
         else:
             # 'Download 'weights from server
             saved_model = torch.load(download_file)
-            model.load_state_dict(saved_model['model_state_dict'])
-            # !!! Warm start deprecated
+            if per_lam:
+                # If lambda is personalized, only load the backbone network
+                scratch_model.load_state_dict(saved_model['model_state_dict'])
+                client_models[client_idx].image_net.load_state_dict(
+                    scratch_model.image_net.state_dict())
+            else:
+                # Otherwise, load everything
+                client_models[client_idx].load_state_dict(
+                    saved_model['model_state_dict'])
 
         # Local updates performed by client for a number of steps
         for sample_idx in tqdm(range(share_int)):
@@ -402,7 +413,7 @@ for round_idx in range(num_rounds):
                 # Reset datasets
                 print('reset iterator for client %d' % client_idx)
                 iterators[client_idx] = iter(train_loaders[client_idx])
-                sample                = next(iterators[client_idx] )
+                sample                = next(iterators[client_idx])
 
             # Move to CUDA
             for key in sample.keys():
@@ -413,7 +424,7 @@ for round_idx in range(num_rounds):
 
             # Get outputs
             est_img_kernel, est_map_kernel, est_ksp = \
-                model(sample, hparams.meta_unrolls,
+                client_models[client_idx](sample, hparams.meta_unrolls,
                       train_mask_params.num_theta_masks)
 
             # Extra padding with zero lines - to restore resolution
@@ -467,7 +478,8 @@ for round_idx in range(num_rounds):
             optimizers[client_idx].zero_grad()
             loss.backward()
             # For MoDL, clip gradients
-            torch.nn.utils.clip_grad_norm(model.parameters(), hparams.grad_clip)
+            torch.nn.utils.clip_grad_norm(client_models[client_idx].parameters(), 
+                                          hparams.grad_clip)
             optimizers[client_idx].step()
 
             # Verbose
@@ -480,7 +492,7 @@ Avg. RSS %.4f, Avg. Coils %.4f, Avg. NMSE %.4f' % (
         # After each round, save the local weights of all clients before downloading
         if os.path.exists(upload_files[client_idx]):
             os.remove(upload_files[client_idx])
-        torch.save({'model_state_dict': model.state_dict()},
+        torch.save({'model_state_dict': client_models[client_idx].state_dict()},
                    upload_files[client_idx])
 
         # Save weights periodically
@@ -488,7 +500,7 @@ Avg. RSS %.4f, Avg. Coils %.4f, Avg. NMSE %.4f' % (
             torch.save({
                 'round': round_idx,
                 'sample_idx': sample_idx,
-                'model_state_dict': model.state_dict(),
+                'model_state_dict': client_models[client_idx].state_dict(),
                 'optimizer_state_dict': optimizers[client_idx].state_dict(),
                 'scheduler_state_dict': schedulers[client_idx].state_dict(),
                 'client_files': global_client_files[client_idx],
@@ -537,10 +549,9 @@ Avg. RSS %.4f, Avg. Coils %.4f, Avg. NMSE %.4f' % (
     if np.mod(round_idx + 1, save_interval) == 0:
         # Downloaded weights
         saved_model = torch.load(download_file)
-        model.load_state_dict(saved_model['model_state_dict'])
-
+        scratch_model.load_state_dict(saved_model['model_state_dict'])
         # Switch to eval
-        model.eval()
+        scratch_model.eval()
         running_SSIM_val = 0.0
         plt.figure()
 
@@ -555,7 +566,7 @@ Avg. RSS %.4f, Avg. Coils %.4f, Avg. NMSE %.4f' % (
                         pass
                 # Get outputs
                 est_img_kernel, est_map_kernel, est_ksp = \
-                    model(sample, hparams.meta_unrolls,
+                    scratch_model(sample, hparams.meta_unrolls,
                           train_mask_params.num_theta_masks)
 
                 # Extra padding with zero lines - to restore resolution
@@ -595,9 +606,9 @@ Avg. RSS %.4f, Avg. Coils %.4f, Avg. NMSE %.4f' % (
             plt.close()
 
             # !!! Hardcoded to validate on the first client site only
-            if client_sites[0] <= 3:
+            if client_sites[0] <= 4:
                 Val_SSIM.append(running_SSIM_val/(num_slices_knee*num_val_pats))
-            elif client_sites[0] > 3:
+            elif client_sites[0] > 4:
                 Val_SSIM.append(running_SSIM_val/(num_slices_brain*num_val_pats))
 
         # Plot validation metrics
@@ -617,8 +628,8 @@ Avg. RSS %.4f, Avg. Coils %.4f, Avg. NMSE %.4f' % (
         # Save validation metrics
         torch.save({'val_ssim': np.asarray(Val_SSIM),
                     'train_ssim': np.asarray(ssim_log[0]),
-                    'model_state': model.state_dict()}, # Federated
+                    'model_state': scratch_model.state_dict()}, # Federated
             local_dir + '/inference_client0_round%d.pt' % round_idx)
 
     # Back to train
-    model.train()
+    scratch_model.train()

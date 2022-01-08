@@ -54,6 +54,7 @@ def site_loader(site_num, train_pat_count, val_pat_count):
     # !!! This is now random with fixed seed
     np.random.seed(2021)
     train_perm = np.random.permutation(len(train_files))
+    np.random.seed(2021)
     val_perm   = np.random.permutation(len(val_files))
 
     train_files_out = [train_files[train_perm[idx]] for

@@ -90,7 +90,7 @@ beta2                 = args.beta2
 
 # More federation stuff
 client_opt            = args.client_opt
-per_lam               = args.per_lam # Personalize lambda or not
+per_lam               = bool(args.per_lam) # Personalize lambda or not
 num_val_pats          = 20
 
 # Immediately determine number of clients
@@ -204,6 +204,7 @@ if not os.path.exists(global_dir):
 
 # Initialize scratch model
 scratch_model = MoDLDoubleUnroll(hparams)
+scratch_model = scratch_model.cuda()
 # Count parameters
 total_params = np.sum([np.prod(p.shape) for p
                        in scratch_model.parameters() if p.requires_grad])
@@ -288,10 +289,9 @@ multicoil_loss = MCLoss().cuda()
 pixel_loss     = torch.nn.MSELoss(reduction='sum')
 nmse_loss      = NMSELoss()
 
-# Get optimizer and scheduler (One for each site)
+# Get optimizer, scheduler and model (one per client)
 optimizers, schedulers = [], []
 client_models          = []
-
 for i in range(num_clients):
     # Client models
     local_model = MoDLDoubleUnroll(hparams)
@@ -394,7 +394,6 @@ upload_files  = [local_dir + '/fed_upload%d.pt' % idx for idx in range(num_clien
 
 # For each training-communication round
 for round_idx in range(num_rounds):
-
     # Train the model for the given number of steps at each client
     for client_idx in range(num_clients):
         if round_idx == 0:
