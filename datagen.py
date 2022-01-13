@@ -31,7 +31,9 @@ class MCFullFastMRI(Dataset):
     def __init__(self, sample_list, num_slices,
                  center_slice, downsample, scramble=False,
                  mps_kernel_shape=None, maps=None,
-                 direction='y', mask_params=None, noise_stdev = 0.0):
+                 sites=None,
+                 direction='y', mask_params=None, 
+                 noise_stdev = 0.0):
         self.sample_list      = sample_list
         self.num_slices       = num_slices
         self.center_slice     = center_slice
@@ -42,6 +44,7 @@ class MCFullFastMRI(Dataset):
         self.direction        = direction # Which direction are lines in
         self.mask_mode        = mask_params.mask_mode
         self.stdev            = noise_stdev
+        self.sites            = sites
         
         if self.scramble:
             # One time permutation
@@ -77,6 +80,12 @@ class MCFullFastMRI(Dataset):
             # Store core file
             core_file  = os.path.basename(self.sample_list[sample_idx])
             core_slice = slice_idx
+            
+        # Assign sites
+        if self.sites in None:
+            site = 0 # Always the first one for a client
+        else:
+            site = self.sites[sample_idx] - 1 # Counting indices from zero
 
         # If desired, load external sensitivity maps
         if not self.maps is None:
@@ -116,7 +125,7 @@ class MCFullFastMRI(Dataset):
         # Store GT data without zero lines
         gt_nonzero_ksp = np.copy(k_image)
 
-        # What is the readout direction?
+        # What is the readout direction?site
         sampling_axis = -1 if self.direction == 'y' else -2
 
         # Fixed percentage of central lines, as per fastMRI
@@ -220,6 +229,7 @@ class MCFullFastMRI(Dataset):
 
         sample = {'idx': idx,
                   'ksp': k_normalized.astype(np.complex64),
+                  'site': int(site),
                   'acs_image': acs_image.astype(np.float32),
                   'norm_const': norm_const.astype(np.float32),
                   # Partitions of sampled k-space
