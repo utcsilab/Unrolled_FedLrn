@@ -299,6 +299,7 @@ class MoDLDoubleUnroll(torch.nn.Module):
             est_r2 = self.image_small_net[site_idx](est_img_kernel[None, ...])[0]
                     
             # Convert to complex
+            est_img_kernel = torch.view_as_complex(est_img_kernel)
             est_r1 = torch.view_as_complex(est_r1)
             est_r2 = torch.view_as_complex(est_r2)
             

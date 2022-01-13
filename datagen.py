@@ -82,7 +82,7 @@ class MCFullFastMRI(Dataset):
             core_slice = slice_idx
             
         # Assign sites
-        if self.sites in None:
+        if self.sites is None:
             site = 0 # Always the first one for a client
         else:
             site = self.sites[sample_idx] - 1 # Counting indices from zero
@@ -229,7 +229,7 @@ class MCFullFastMRI(Dataset):
 
         sample = {'idx': idx,
                   'ksp': k_normalized.astype(np.complex64),
-                  'site': int(site),
+                  'site_idx': int(site),
                   'acs_image': acs_image.astype(np.float32),
                   'norm_const': norm_const.astype(np.float32),
                   # Partitions of sampled k-space

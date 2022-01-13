@@ -9,7 +9,7 @@ from tqdm import tqdm
 from dotmap import DotMap
 
 from datagen import MCFullFastMRI, crop
-from models_c import MoDLDoubleUnroll
+from models_split_c import MoDLDoubleUnroll
 from losses import SSIMLoss, MCLoss, NMSELoss
 from utils import ifft
 
