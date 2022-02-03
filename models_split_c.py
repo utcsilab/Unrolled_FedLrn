@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Created on Mon Nov 23 16:17:34 2020
-
-@author: yanni
-"""
 
 import torch
 import sigpy as sp
@@ -18,7 +13,7 @@ from opt import ZConjGrad
 from unet import NormUnet
 
 # Unrolled J-Sense in MoDL style
-class MoDLDoubleUnroll(torch.nn.Module):
+class MoDLSplitNetworks(torch.nn.Module):
     def __init__(self, hparams):
         super(MoDLDoubleUnroll, self).__init__()
         # Storage
