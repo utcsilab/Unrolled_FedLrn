@@ -15,7 +15,7 @@ from unet import NormUnet
 # Unrolled J-Sense in MoDL style
 class MoDLSplitNetworks(torch.nn.Module):
     def __init__(self, hparams):
-        super(MoDLDoubleUnroll, self).__init__()
+        super(MoDLSplitNetworks, self).__init__()
         # Storage
         self.verbose    = hparams.verbose
         self.batch_size = hparams.batch_size
