@@ -106,22 +106,24 @@ class MCFullFastMRI(Dataset):
         # Permute if desired
         if self.scramble:
             idx = self.permute[idx]
-
         # Convert to numerical
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
-        # Separate slice and sample
-        sample_idx = idx // self.num_slices
-        slice_idx  = self.center_slice + \
-            np.mod(idx, self.num_slices) - self.num_slices // 2
-
         # Extract from preloaded collections
         if self.preload:
+            # Separate slice (counting from zero!) and sample
+            sample_idx = idx // self.num_slices
+            slice_idx  = np.mod(idx, self.num_slices)
+            
             k_image = self.preloaded_slices[sample_idx][slice_idx]
             ref_rss = self.preloaded_rss[sample_idx][slice_idx]
             s_maps  = self.preloaded_maps[sample_idx][slice_idx]
         else:
+            # Separate slice and sample
+            sample_idx = idx // self.num_slices
+            slice_idx  = self.center_slice + \
+                np.mod(idx, self.num_slices) - self.num_slices // 2
             # Load MRI samples and maps
             with h5py.File(self.sample_list[sample_idx], 'r') as contents:
                 # Get k-space for specific slice
@@ -244,6 +246,7 @@ class MCFullFastMRI(Dataset):
                   'acs_image': acs_image.astype(np.float32),
                   'norm_const': norm_const.astype(np.float32),
                   'gt_ksp': gt_ksp.astype(np.complex64),
+                  'gt_nonzero_ksp': gt_nonzero_ksp.astype(np.complex64),
                   's_maps_cplx': s_maps.astype(np.complex64),
                   'mask': k_sampling_mask.astype(np.float32),
                   'acs_lines': len(center_slice_idx),
