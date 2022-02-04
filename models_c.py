@@ -1,19 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Created on Mon Nov 23 16:17:34 2020
-
-@author: yanni
-"""
 
 import torch
 import sigpy as sp
 import numpy as np
 import copy as copy
 
-from core_ops import TorchHybridSense, TorchHybridImage
 from core_ops import TorchMoDLSense, TorchMoDLImage
-from utils import fft, ifft
 
 from opt import ZConjGrad
 from unet import NormUnet
@@ -122,28 +115,13 @@ class MoDLDoubleUnroll(torch.nn.Module):
 
         # For each sample in batch
         for idx in range(self.batch_size):
-            if self.mode == 'DeepJSense':
-                # Type
-                if direction == 'ConvSense':
-                    forward_op, adjoint_op, normal_op = \
-                        TorchHybridSense(self.img_kernel_shape,
-                                         mps_kernel[idx], mask[idx],
-                                         self.img_conv_shape,
-                                         self.ksp_padding, self.maps_padding)
-                elif direction == 'ConvImage':
-                    forward_op, adjoint_op, normal_op = \
-                        TorchHybridImage(self.mps_kernel_shape,
-                                         img_kernel[idx], mask[idx],
-                                         self.img_conv_shape,
-                                         self.ksp_padding, self.maps_padding)
-            elif self.mode == 'MoDL':
-                # Type
-                if direction == 'ConvSense':
-                    forward_op, adjoint_op, normal_op = \
-                        TorchMoDLSense(mps_kernel[idx], mask[idx])
-                elif direction == 'ConvImage':
-                    forward_op, adjoint_op, normal_op = \
-                        TorchMoDLImage(img_kernel[idx], mask[idx])
+            # Type
+            if direction == 'ConvSense':
+                forward_op, adjoint_op, normal_op = \
+                    TorchMoDLSense(mps_kernel[idx], mask[idx])
+            elif direction == 'ConvImage':
+                forward_op, adjoint_op, normal_op = \
+                    TorchMoDLImage(img_kernel[idx], mask[idx])
 
             # Add to lists
             normal_ops.append(normal_op)
@@ -166,47 +144,9 @@ class MoDLDoubleUnroll(torch.nn.Module):
         return core_function
 
     def forward(self, data, meta_unrolls=1, num_theta_masks=1):
-        # Use the full accelerated k-space
-        if self.mask_mode == 'Gauss':
-            ksp       = data['ksp_inner']
-            mask      = data['mask_inner'] # Set of 2D masks
-            ksp_full  = data['ksp_inner_union']
-            mask_full = data['mask_inner_union'] # Union of all 2D masks
-
-        elif self.mask_mode == 'Accel_only':
-            ksp       = data['ksp']
-            mask      = data['mask'] # 2D mask (or whatever, easy to adjust)
-            ksp_full  = data['ksp']
-            mask_full = data['mask']
-
-        # Get image kernel shape - dynamic and includes padding
-        if self.mode == 'DeepJSense':
-            self.img_kernel_shape = [ksp.shape[-2]+self.mps_kernel_shape[-2]-1,
-                                     ksp.shape[-1]+self.mps_kernel_shape[-1]-1] # H x W
-            self.img_conv_shape   = [self.num_coils,
-                                     self.img_kernel_shape[-2]-self.mps_kernel_shape[-2]+1,
-                                     self.img_kernel_shape[-1]-self.mps_kernel_shape[-1]+1] # After convoluting with map kernel
-
-            # Compute all required padding parameters
-            self.padding = (self.img_conv_shape[-2] - 1,
-                            self.img_conv_shape[-1] - 1) # Outputs a small kernel
-
-            # Decide based on the number of k-space lines
-            if np.mod(ksp.shape[-1], 2) == 0:
-                self.maps_padding = (int(np.ceil(self.padding[-2] / 2)),
-                                     int(np.floor(self.padding[-2] / 2)),
-                                     int(np.ceil(self.padding[-1] / 2)),
-                                     int(np.floor(self.padding[-1] / 2)))
-                self.ksp_padding  = (int(np.ceil((self.img_kernel_shape[-2] - self.img_conv_shape[-2])/2)),
-                                     int(np.floor((self.img_kernel_shape[-2] - self.img_conv_shape[-2])/2)),
-                                     int(np.ceil((self.img_kernel_shape[-1] - self.img_conv_shape[-1])/2)),
-                                     int(np.floor((self.img_kernel_shape[-1] - self.img_conv_shape[-1])/2)))
-            else:
-                # !!! Input ksp has to be of even shape
-                assert False
-
-        elif self.mode == 'MoDL': # No padding
-            pass # Nothing needed
+        # Extract relevant amounts
+        ksp       = data['ksp']
+        mask      = data['mask'] # 2D mask (or whatever, easy to adjust)
 
         # Initializers
         with torch.no_grad():
@@ -231,124 +171,39 @@ class MoDLDoubleUnroll(torch.nn.Module):
                 # Get adjoint map operator
                 _, adjoint_ops, _ = \
                 self.get_core_torch_ops(est_maps_kernel, None,
-                                        mask_full, 'ConvSense') # Use all the masks to initialize
+                                        mask, 'ConvSense') # Use all the masks to initialize
                 adjoint_batch_op = self.get_batch_op(adjoint_ops, self.batch_size)
                 # Apply
-                est_img_kernel = adjoint_batch_op(ksp_full).type(torch.complex64)
+                est_img_kernel = adjoint_batch_op(ksp).type(torch.complex64)
 
         # Logging outputs
         if self.logging:
             # Kernels after denoiser modules
-            mps_kernel_denoised = []
             img_kernel_denoised = []
             # Estimated logs
-            mps_logs, img_logs = [], []
-            ksp_logs           = []
-            mps_logs.append(copy.deepcopy(est_maps_kernel))
+            img_logs, ksp_logs = [], []
             img_logs.append(copy.deepcopy(est_img_kernel))
-            # Internal logs
-            before_maps, after_maps = [], []
-            att_logs                = []
+
+        # !!! Only once is sufficient
+        # Get operators for maps --> images using map kernel
+        normal_ops, adjoint_ops, forward_ops = \
+            self.get_core_torch_ops(est_maps_kernel, None,
+                    mask, 'ConvSense')
+        # Get joint batch operators for adjoint and normal
+        normal_batch_op, adjoint_batch_op = \
+            self.get_batch_op(normal_ops, self.batch_size), \
+            self.get_batch_op(adjoint_ops, self.batch_size)
 
         # For each outer unroll
         for meta_idx in range(meta_unrolls):
-            # Pick masks round-robin
-            mask_idx = np.mod(meta_idx, num_theta_masks)
             ## !!! Block 1
             if self.block1_max_iter > 0:
-                if self.mode == 'MoDL':
-                    assert False, 'Shouldn''t be here!'
-
-                # Get operators for images --> maps using image kernel
-                normal_ops, adjoint_ops, forward_ops = \
-                    self.get_core_torch_ops(None, est_img_kernel,
-                                            mask[:, mask_idx], 'ConvImage')
-                # Get joint batch operators for adjoint and normal
-                normal_batch_op, adjoint_batch_op = \
-                    self.get_batch_op(normal_ops, self.batch_size), \
-                    self.get_batch_op(adjoint_ops, self.batch_size)
-
-                # Compute RHS
-                if meta_idx == 0:
-                    rhs = adjoint_batch_op(ksp[:, mask_idx])
-                else:
-                    rhs = adjoint_batch_op(ksp[:, mask_idx]) + \
-                        self.block1_l2lam[0] * est_maps_kernel
-
-                # Get unrolled CG op
-                cg_op = ZConjGrad(rhs, normal_batch_op,
-                                  l2lam=self.block1_l2lam[0],
-                                  max_iter=self.block1_max_iter,
-                                  eps=self.cg_eps, verbose=self.verbose)
-                # Run CG
-                est_maps_kernel = cg_op(est_maps_kernel)
-
-                # Log
-                if self.logging:
-                    mps_logs.append(copy.deepcopy(est_maps_kernel))
-
-                # Normalize maps to unit energy
-                map_factor = np.sqrt(ksp_full.shape[-1] * ksp_full.shape[-2]) * \
-                    1. / torch.sqrt(torch.sum(torch.square(torch.abs(est_maps_kernel))))
-                est_maps_kernel = est_maps_kernel * map_factor
-
-                # Pre-process
-                if not self.use_map_net:
-                    pass
-                else:
-                    # Transform map kernel to image space
-                    est_maps_kernel = ifft(est_maps_kernel)
-                    # Convert to real and treat as a set (on batch axis)
-                    est_maps_kernel = torch.view_as_real(est_maps_kernel)
-                    est_maps_kernel = est_maps_kernel.permute(0, 1, -1, 2, 3)
-                    # Absorb batch dimension
-                    est_maps_kernel = est_maps_kernel[0]
-
-                # Log right before
-                if self.logging:
-                    before_maps.append(est_maps_kernel.cpu().detach().numpy())
-
-                # Apply denoising network
-                if not self.use_map_net:
-                    pass
-                else:
-                    est_maps_kernel = self.maps_net(est_maps_kernel)
-
-                # Log right after
-                if self.logging:
-                    after_maps.append(est_maps_kernel.cpu().detach().numpy())
-
-                # Post-process
-                if not self.use_map_net:
-                    pass
-                else:
-                    # Inject batch dimension and re-arrange
-                    est_maps_kernel = est_maps_kernel[None, ...]
-                    est_maps_kernel = est_maps_kernel.permute(0, 1, 3, 4, 2).contiguous()
-
-                    # Convert back to frequency domain
-                    est_maps_kernel = torch.view_as_complex(est_maps_kernel)
-                    est_maps_kernel = fft(est_maps_kernel)
-
-                # Log
-                if self.logging:
-                    mps_kernel_denoised.append(copy.deepcopy(est_maps_kernel))
-
+                assert False, 'Deprecated!'
+                
             ## !!! Block 2
-            # Get operators for maps --> images using map kernel
-            normal_ops, adjoint_ops, forward_ops = \
-                self.get_core_torch_ops(est_maps_kernel, None,
-                        mask, 'ConvSense')
-            # Get joint batch operators for adjoint and normal
-            normal_batch_op, adjoint_batch_op = \
-                self.get_batch_op(normal_ops, self.batch_size), \
-                self.get_batch_op(adjoint_ops, self.batch_size)
-            #print(mask[:,mask_idx].shape)
-            #print(ksp[mask_idx,:].shape)
-            #print(mask_idx)
             # Compute RHS
             if meta_idx == 0:
-                rhs = adjoint_batch_op(ksp) #flipped order of was ksp[:,mask_idx]: same below
+                rhs = adjoint_batch_op(ksp) # flipped order of was ksp[:,mask_idx]: same below
             else:
                 rhs = adjoint_batch_op(ksp) + \
                     self.block2_l2lam[0] * est_img_kernel
@@ -365,20 +220,11 @@ class MoDLDoubleUnroll(torch.nn.Module):
             if self.logging:
                 img_logs.append(est_img_kernel)
 
-            # Convert to reals
-            est_img_kernel = torch.view_as_real(est_img_kernel)
-
             # Apply image denoising network in image space
-            if self.img_sep:
-                assert False, 'Deprecated!'
-            else:
-                if self.img_arch == 'ResNet' or self.img_arch == 'ResNetSplit':
-                    assert False, 'Deprecated!'
-                elif self.img_arch == 'UNet':
-                    est_img_kernel = self.image_net(est_img_kernel[None, ...])[0]
-                    
-            # Convert to complex
+            est_img_kernel = torch.view_as_real(est_img_kernel)
+            est_img_kernel = self.image_net(est_img_kernel[None, ...])[0]
             est_img_kernel = torch.view_as_complex(est_img_kernel)
+            
             # Log
             if self.logging:
                 img_kernel_denoised.append(est_img_kernel)
@@ -404,15 +250,11 @@ class MoDLDoubleUnroll(torch.nn.Module):
             # Add final ksp to logs
             ksp_logs.append(est_ksp)
             # Glue logs
-            mps_logs = torch.cat(mps_logs, dim=0)
             img_logs = torch.cat(img_logs, dim=0)
-            if not self.mode == 'MoDL':
-                mps_kernel_denoised = torch.cat(mps_kernel_denoised, dim=0)
             img_kernel_denoised = torch.cat(img_kernel_denoised, dim=0)
 
         if self.logging:
             return est_img_kernel, est_maps_kernel, est_ksp, \
-                mps_logs, img_logs, mps_kernel_denoised, img_kernel_denoised, \
-                ksp_logs, before_maps, after_maps, att_logs
+                img_logs, img_kernel_denoised, ksp_logs
         else:
             return est_img_kernel, est_maps_kernel, est_ksp

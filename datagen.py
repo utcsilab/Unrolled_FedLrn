@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import h5py, os
+import h5py, os, copy
 import numpy as np
 import sigpy as sp
+from tqdm import tqdm
 import torch
-import torch.fft as torch_fft
 from torch.utils.data import Dataset
 
 def crop(variable, tw, th):
@@ -31,9 +31,9 @@ class MCFullFastMRI(Dataset):
     def __init__(self, sample_list, num_slices,
                  center_slice, downsample, scramble=False,
                  mps_kernel_shape=None, maps=None,
-                 sites=None,
-                 direction='y', mask_params=None, 
-                 noise_stdev = 0.0):
+                 sites=None, direction='y',
+                 mask_params=None, noise_stdev=0.0,
+                 preload=True):
         self.sample_list      = sample_list
         self.num_slices       = num_slices
         self.center_slice     = center_slice
@@ -42,9 +42,53 @@ class MCFullFastMRI(Dataset):
         self.scramble         = scramble # Scramble samples or not?
         self.maps             = maps # Pre-estimated sensitivity maps
         self.direction        = direction # Which direction are lines in
-        self.mask_mode        = mask_params.mask_mode
         self.stdev            = noise_stdev
         self.sites            = sites
+        self.preload          = preload
+        
+        if self.preload:
+            print('Preloading files!')
+            self.preloaded_slices = []
+            self.preloaded_maps, self.preloaded_rss = [], []
+            
+            # For each patient
+            for patient_idx in tqdm(range(len(sample_list))):
+                # A local list
+                local_slices, local_mps = [], []
+                local_rss               = []
+                # For each slice - offset from center
+                for slice_idx in range(num_slices):
+                    true_slice_idx = \
+                        self.center_slice + slice_idx - self.num_slices // 2
+                    
+                    # Load measurements
+                    with h5py.File(self.sample_list[patient_idx], 'r') as contents:
+                        # Get k-space for specific slice
+                        k_image = np.asarray(contents['kspace'][true_slice_idx])
+                        ref_rss = np.asarray(
+                            contents['reconstruction_rss'][true_slice_idx])
+                    # Load maps
+                    with h5py.File(self.maps[patient_idx], 'r') as contents:
+                        s_maps = np.asarray(contents['s_maps'][true_slice_idx])
+                    
+                    # Save
+                    local_slices.append(k_image)
+                    local_rss.append(ref_rss)
+                    local_mps.append(s_maps)                      
+                    
+                # Convert to arrays - always tileable
+                local_slices = np.asarray(local_slices)
+                local_mps    = np.asarray(local_mps)
+                local_rss    = np.asarray(local_rss)
+                assert np.all(
+                    local_slices.shape == local_mps.shape), 'Incorrect maps!'
+                
+                # Add to global list - not generally tileable
+                self.preloaded_slices.append(copy.deepcopy(local_slices))
+                self.preloaded_maps.append(copy.deepcopy(local_mps))
+                self.preloaded_rss.append(copy.deepcopy(local_rss))
+                
+            print('Finished preloading!')
         
         if self.scramble:
             # One time permutation
@@ -72,30 +116,36 @@ class MCFullFastMRI(Dataset):
         slice_idx  = self.center_slice + \
             np.mod(idx, self.num_slices) - self.num_slices // 2
 
-        # Load MRI image
-        with h5py.File(self.sample_list[sample_idx], 'r') as contents:
-            # Get k-space for specific slice
-            k_image = np.asarray(contents['kspace'][slice_idx])
-            ref_rss = np.asarray(contents['reconstruction_rss'][slice_idx])
-            # Store core file
-            core_file  = os.path.basename(self.sample_list[sample_idx])
-            core_slice = slice_idx
-            
+        # Extract from preloaded collections
+        if self.preload:
+            k_image = self.preloaded_slices[sample_idx][slice_idx]
+            ref_rss = self.preloaded_rss[sample_idx][slice_idx]
+            s_maps  = self.preloaded_maps[sample_idx][slice_idx]
+        else:
+            # Load MRI samples and maps
+            with h5py.File(self.sample_list[sample_idx], 'r') as contents:
+                # Get k-space for specific slice
+                k_image = np.asarray(contents['kspace'][slice_idx])
+                ref_rss = np.asarray(contents['reconstruction_rss'][slice_idx])
+                
+            # If desired, load external sensitivity maps
+            if not self.maps is None:
+                with h5py.File(self.maps[sample_idx], 'r') as contents:
+                    # Get sensitivity maps for specific slice
+                    s_maps = np.asarray(contents['s_maps'][slice_idx])#was map_idx
+            else:
+                # Dummy values
+                s_maps = np.asarray([0.])
+                
+        # Store core file
+        core_file  = os.path.basename(self.sample_list[sample_idx])
+        core_slice = slice_idx
+
         # Assign sites
         if self.sites is None:
             site = 0 # Always the first one for a client
         else:
             site = self.sites[sample_idx] - 1 # Counting indices from zero
-
-        # If desired, load external sensitivity maps
-        if not self.maps is None:
-            with h5py.File(self.maps[sample_idx], 'r') as contents:
-                # Get sensitivity maps for specific slice
-                s_maps      = np.asarray(contents['s_maps'][slice_idx])#was map_idx
-                s_maps_full = np.copy(s_maps)
-        else:
-            # Dummy values
-            s_maps, s_maps_full = np.asarray([0.]), np.asarray([0.])
 
         # Compute sum-energy of lines
         # !!! This is because some lines are exact zeroes
@@ -160,102 +210,42 @@ class MCFullFastMRI(Dataset):
             # No downsampling, all ones
             k_sampling_mask = np.ones((k_image.shape[-1],))
 
-
-        # Get ACS region for normalization
-        if self.direction == 'y':
-            acs = k_image[..., center_slice_idx.astype(np.int)]
-        elif self.direction == 'x':
-            acs = k_image[..., center_slice_idx.astype(np.int), :]
-        # Get normalization constant from ACS
+        # Get normalization constant from undersampled RSS
         acs_image = sp.rss(sp.ifft(sp.resize(sp.resize(k_image, 
-               [k_image.shape[0], int(num_central_lines) , int(num_central_lines)]), gt_ksp.shape), 
+               [k_image.shape[0], int(num_central_lines),
+                int(num_central_lines)]), gt_ksp.shape), 
                                    axes=(-1,-2)), axes=(0,))
         norm_const = np.percentile(acs_image, 99)
 
         # Optional: Add noise to ksp
         if self.stdev > 1e-20:
-            noise = np.random.randn(*k_image.shape) + 1j * np.random.randn(*k_image.shape)
+            noise   = np.random.randn(*k_image.shape) + \
+                1j * np.random.randn(*k_image.shape)
             k_image = k_image + 1 / np.sqrt(2) * self.stdev * noise * norm_const
-        ksp_nonzero_noise = np.copy(k_image)
 
         # Get measurements
         k_image[..., np.logical_not(k_sampling_mask)] = 0.
 
-        if self.mask_mode == 'Accel_only':
-            # Plain copy
-            masks_inner      = [k_sampling_mask] # For consistency
-            mask_inner_union = k_sampling_mask
-            k_inner_union    = k_image
-            mask_outer       = k_sampling_mask
-
-        # Get training k-space splits
-        if self.direction == 'y':
-            k_sampling_mask = k_sampling_mask[None, ...]
-            k_inner = [k_image * masks_inner[idx][None,...]
-                       for idx in range(self.num_theta_masks)] # A list of k-space values
-            k_outer = k_image * mask_outer[None,...]
-        elif self.direction == 'x':
-            k_sampling_mask = k_sampling_mask[..., None]
-            k_inner = [k_image * masks_inner[idx][None,...]
-                       for idx in range(self.num_theta_masks)] # Same as above
-            k_outer = k_image * mask_outer[None,...]
-
-        # Cast to array
-        k_inner     = np.stack(k_inner)
-        masks_inner = np.stack(masks_inner)
-
         # Normalize k-space based on ACS
-        k_normalized = k_image / norm_const
-        k_inner      = k_inner / norm_const
-        k_outer      = k_outer / norm_const
-        gt_ksp       = gt_ksp / norm_const
-        gt_nonzero_ksp    = gt_nonzero_ksp / norm_const
-        ksp_nonzero_noise = ksp_nonzero_noise / norm_const
-
-        ksp_padded_noise = sp.resize(ksp_nonzero_noise, gt_ksp.shape)
-        # dim_2 = np.minimum(ref_rss.shape[-1],gt_nonzero_ksp.shape[-1])
-
+        k_normalized   = k_image / norm_const
+        gt_ksp         = gt_ksp / norm_const
+        gt_nonzero_ksp = gt_nonzero_ksp / norm_const
+        
         # Scaled GT RSS
         gt_nonzero_ksp_pad = sp.resize(gt_nonzero_ksp, gt_ksp.shape)
-        gt_ref_rss   = sp.resize(sp.rss(sp.ifft(gt_nonzero_ksp_pad, axes=(-1,-2)), axes=(0,)), ref_rss.shape)
+        gt_ref_rss   = sp.resize(sp.rss(sp.ifft(gt_nonzero_ksp_pad,
+                            axes=(-1,-2)), axes=(0,)), ref_rss.shape)
         ref_rss      = ref_rss / norm_const
         data_range   = np.max(gt_ref_rss)
-
-        # Initial sensitivity maps
-        x_coils    = sp.ifft(k_image, axes=(-2, -1))
-        x_rss      = np.linalg.norm(x_coils, axis=0, keepdims=True)
-        init_maps  = sp.resize(sp.fft(x_coils / x_rss, axes=(-2, -1)),
-                               oshape=self.mps_kernel_shape)
-
+        
         sample = {'idx': idx,
                   'ksp': k_normalized.astype(np.complex64),
                   'site_idx': int(site),
                   'acs_image': acs_image.astype(np.float32),
                   'norm_const': norm_const.astype(np.float32),
-                  # Partitions of sampled k-space
-                  'ksp_inner_union': k_inner_union.astype(np.complex64),
-                  'ksp_inner': k_inner.astype(np.complex64),
-                  'ksp_outer': k_outer.astype(np.complex64),
-                  'ksp_ACS': acs.astype(np.complex64),
-                  ###
                   'gt_ksp': gt_ksp.astype(np.complex64),
-                  'nonzero_ksp_noise': ksp_nonzero_noise.astype(np.complex64),
-                  'padded_ksp_noise': ksp_padded_noise.astype(np.complex64),
-                  'gt_nonzero_ksp': gt_nonzero_ksp.astype(np.complex64),
-                  'gt_nonzero_ksp_pad' : gt_nonzero_ksp_pad.astype(np.complex64),
-                  's_maps': np.stack((np.real(s_maps),
-                                      np.imag(s_maps)),
-                                     axis=-1).astype(np.float32),
                   's_maps_cplx': s_maps.astype(np.complex64),
-                  's_maps_full': s_maps_full.astype(np.complex64),
-                  'init_maps': init_maps.astype(np.complex64),
                   'mask': k_sampling_mask.astype(np.float32),
-                  # 'ACS_mask': k_ACS_mask.astype(np.float32),
-                  # Masks for partitions of sampled k-space
-                  'mask_inner_union': mask_inner_union.astype(np.float32),
-                  'mask_inner': masks_inner.astype(np.float32),
-                  'mask_outer': mask_outer.astype(np.float32),
-                  ###
                   'acs_lines': len(center_slice_idx),
                   'dead_lines': dead_lines,
                   'gt_ref_rss': gt_ref_rss.astype(np.float32),

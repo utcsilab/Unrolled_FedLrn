@@ -6,7 +6,6 @@ import sigpy as sp
 import numpy as np
 import copy as copy
 
-from core_ops import TorchHybridSense, TorchHybridImage
 from core_ops import TorchMoDLSense, TorchMoDLImage
 
 from opt import ZConjGrad
@@ -145,28 +144,13 @@ class MoDLSplitNetworks(torch.nn.Module):
 
         # For each sample in batch
         for idx in range(self.batch_size):
-            if self.mode == 'DeepJSense':
-                # Type
-                if direction == 'ConvSense':
-                    forward_op, adjoint_op, normal_op = \
-                        TorchHybridSense(self.img_kernel_shape,
-                                         mps_kernel[idx], mask[idx],
-                                         self.img_conv_shape,
-                                         self.ksp_padding, self.maps_padding)
-                elif direction == 'ConvImage':
-                    forward_op, adjoint_op, normal_op = \
-                        TorchHybridImage(self.mps_kernel_shape,
-                                         img_kernel[idx], mask[idx],
-                                         self.img_conv_shape,
-                                         self.ksp_padding, self.maps_padding)
-            elif self.mode == 'MoDL':
-                # Type
-                if direction == 'ConvSense':
-                    forward_op, adjoint_op, normal_op = \
-                        TorchMoDLSense(mps_kernel[idx], mask[idx])
-                elif direction == 'ConvImage':
-                    forward_op, adjoint_op, normal_op = \
-                        TorchMoDLImage(img_kernel[idx], mask[idx])
+            # Type
+            if direction == 'ConvSense':
+                forward_op, adjoint_op, normal_op = \
+                    TorchMoDLSense(mps_kernel[idx], mask[idx])
+            elif direction == 'ConvImage':
+                forward_op, adjoint_op, normal_op = \
+                    TorchMoDLImage(img_kernel[idx], mask[idx])
 
             # Add to lists
             normal_ops.append(normal_op)
@@ -189,24 +173,12 @@ class MoDLSplitNetworks(torch.nn.Module):
         return core_function
 
     def forward(self, data, meta_unrolls=1, num_theta_masks=1):
-        # Use the full accelerated k-space
-        if self.mask_mode == 'Gauss':
-            assert False, 'Deprecated!'
-
-        elif self.mask_mode == 'Accel_only':
-            ksp       = data['ksp']
-            mask      = data['mask'] # 2D mask (or whatever, easy to adjust)
-            ksp_full  = data['ksp']
-            mask_full = data['mask']
-            # From which distribution is this sample drawn?
-            site_idx  = torch.squeeze(data['site_idx']).item() 
-
-        # Get image kernel shape - dynamic and includes padding
-        if self.mode == 'DeepJSense':
-            assert False, 'Deprecated!'
-
-        elif self.mode == 'MoDL': # No padding
-            pass # Nothing needed
+        ksp       = data['ksp']
+        mask      = data['mask'] # 2D mask (or whatever, easy to adjust)
+        ksp_full  = data['ksp']
+        mask_full = data['mask']
+        # From which distribution is this sample drawn?
+        site_idx  = torch.squeeze(data['site_idx']).item() 
 
         # Initializers
         with torch.no_grad():
@@ -247,7 +219,8 @@ class MoDLSplitNetworks(torch.nn.Module):
             r1_logs, r2_logs   = [], []
             ksp_logs           = []
             img_logs.append(copy.deepcopy(est_img_kernel))
-        # Only once
+            
+        # !!! Only once is sufficient
         # Get operators for maps --> images using map kernel
         normal_ops, adjoint_ops, forward_ops = \
             self.get_core_torch_ops(est_maps_kernel, None,
