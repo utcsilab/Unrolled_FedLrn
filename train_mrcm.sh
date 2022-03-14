@@ -1,0 +1,1 @@
+python FL_MRCM_train.py --gpu 0 --train_dilation 5 --client_pats 5 5 5 5 5 5 5 5 5 5 --client_sites 1 2 4 5 6 7 8 9 10 11 --target_client_idx 1
