@@ -341,19 +341,21 @@ str(iter) + '_clientD'+ str(client_idx) + '_before_download.pt')
             
             for sample_idx, sample in tqdm(enumerate(val_loader)):
                 # Move to CUDA
-                input, target, mean, std, _, _ = sample
+                input, target, mean, std, _, _, _ = sample
                 input  = input.cuda()
                 target = target.cuda()
+                mean   = mean.cuda()
+                std    = std.cuda()
     
                 # Get outputs
-                est_rss_cropped = net_glob(input)
+                est_rss_cropped, _ = net_glob(input)
     
                 # Re-scale RSS back to natural intervals
                 est_rss_cropped = est_rss_cropped * std + mean
                 target          = target * std + mean
     
                 # Get vmax
-                vmax = torch.max(target)
+                vmax = torch.amax(target, dim=(-1, -2))
                 
                 # SSIM
                 ssim_loss = ssim(input[:, None], target[:, None], vmax)
@@ -361,11 +363,11 @@ str(iter) + '_clientD'+ str(client_idx) + '_before_download.pt')
                 # Add the first few ones to plot
                 if sample_idx >=4 and sample_idx < 8:
                     plt.subplot(2, 4, sample_idx-3)
-                    plt.imshow(torch.flip(target).cpu().detach().numpy(), vmin=0., 
+                    plt.imshow(torch.flip(target[0], dims=(0,)).cpu().detach().numpy(), vmin=0., 
                                vmax=vmax, cmap='gray')
                     plt.axis('off'); plt.title('GT RSS')
                     plt.subplot(2, 4, sample_idx-3+4*1)
-                    plt.imshow(torch.flip(est_rss_cropped).cpu().detach().numpy(),
+                    plt.imshow(torch.flip(est_rss_cropped[0], dims=(0,)).cpu().detach().numpy(),
                                vmin=0., vmax=vmax, cmap='gray')
                     plt.axis('off'); plt.title('SSIM: %.3f' % (1-ssim_loss.item()))
     
