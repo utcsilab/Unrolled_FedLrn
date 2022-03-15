@@ -72,9 +72,9 @@ unet_ch               = args.ch
 unet_num_pool         = args.num_pool
 
 # Follow the ratio 24:1:16
-num_rounds            = args.train_dilation * 24
+num_rounds            = args.train_dilation * 48
 save_interval         = args.train_dilation * 1
-decay_epochs          = args.train_dilation * 16
+decay_epochs          = args.train_dilation * 32
 
 # Federation stuff
 share_int             = args.share_int
