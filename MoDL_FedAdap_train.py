@@ -71,7 +71,7 @@ resume_round          = args.resume_round
 unet_ch               = args.ch
 unet_num_pool         = args.num_pool
 
-# Follow the ratio 24:1:16
+# Follow the ratio 48:1:32
 num_rounds            = args.train_dilation * 48
 save_interval         = args.train_dilation * 1
 decay_epochs          = args.train_dilation * 32
